@@ -14,6 +14,12 @@ import useCanvasStore from '../../stores/useCanvasStore';
 import nodeTypes from '../../utils/nodeTypes';
 import NodePalette from '../../components/canvas/NodePalette';
 
+const RUN_STATUS_BANNER = {
+  running:   { bg: 'bg-amber-50 border-amber-200 text-amber-800', label: '⟳ Running…' },
+  completed: { bg: 'bg-green-50 border-green-200 text-green-800', label: '✓ Run completed' },
+  failed:    { bg: 'bg-red-50 border-red-200 text-red-800',       label: '✕ Run failed' },
+};
+
 function CanvasInner() {
   const { id: workflowId } = useParams();
   const navigate = useNavigate();
@@ -21,16 +27,19 @@ function CanvasInner() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [renamingTitle, setRenamingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState('');
+  const fileInputRef = useRef(null);
 
   const {
     workflowName, isPublished, nodes, edges, loading,
     loadWorkflow, onNodesChange, onEdgesChange, onNodeDragStop,
     onConnect, addNode, deleteEdge, deleteNode, renameWorkflow, togglePublish,
+    triggerRun, clearRun, runStatus, uploading, uploadError,
   } = useCanvasStore();
 
   useEffect(() => {
     loadWorkflow(workflowId);
-  }, [workflowId, loadWorkflow]);
+    return () => clearRun();
+  }, [workflowId, loadWorkflow, clearRun]);
 
   useEffect(() => {
     setTitleValue(workflowName);
@@ -38,7 +47,6 @@ function CanvasInner() {
 
   const handleAddNode = useCallback(async (nodeType, label) => {
     const { x, y, zoom } = getViewport();
-    // Convert viewport centre to flow coordinates
     const centerX = (-x + window.innerWidth / 2) / zoom;
     const centerY = (-y + window.innerHeight / 2) / zoom;
     await addNode(nodeType, label, { x: centerX, y: centerY });
@@ -61,6 +69,14 @@ function CanvasInner() {
     setRenamingTitle(false);
   }
 
+  function handleFileChange(e) {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      triggerRun(files);
+      e.target.value = '';
+    }
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
@@ -68,6 +84,8 @@ function CanvasInner() {
       </div>
     );
   }
+
+  const banner = runStatus ? RUN_STATUS_BANNER[runStatus] : null;
 
   return (
     <div className="flex flex-col h-screen bg-gray-100 dark:bg-gray-900" onKeyDown={handleKeyDown} tabIndex={-1}>
@@ -100,6 +118,24 @@ function CanvasInner() {
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Upload & Run button */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif"
+            className="hidden"
+            onChange={handleFileChange}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading || runStatus === 'running'}
+            className="text-sm px-3 py-1 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-md font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Upload documents and run"
+          >
+            {uploading ? 'Uploading…' : '↑ Upload & Run'}
+          </button>
+
           <span
             className={`text-xs px-2 py-0.5 rounded-full font-medium ${
               isPublished
@@ -124,6 +160,22 @@ function CanvasInner() {
           </button>
         </div>
       </div>
+
+      {/* Run status banner */}
+      {(banner || uploadError) && (
+        <div
+          className={`flex items-center justify-between px-4 py-1.5 border-b text-sm ${
+            uploadError
+              ? 'bg-red-50 border-red-200 text-red-800'
+              : banner.bg
+          }`}
+        >
+          <span>{uploadError || banner.label}</span>
+          <button onClick={clearRun} className="text-xs underline ml-4 opacity-70 hover:opacity-100">
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Canvas + Palette */}
       <div className="flex flex-1 overflow-hidden">
@@ -157,7 +209,6 @@ function CanvasInner() {
   );
 }
 
-// ReactFlowProvider must wrap any component that uses useReactFlow()
 function WorkflowCanvas() {
   return (
     <ReactFlowProvider>

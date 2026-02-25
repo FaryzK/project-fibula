@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { applyNodeChanges, applyEdgeChanges } from '@xyflow/react';
 import * as workflowService from '../services/workflowService';
+import executionService from '../services/executionService';
 
 // Maps DB rows → React Flow objects
 function dbNodeToRF(n) {
@@ -52,6 +53,14 @@ const useCanvasStore = create((set, get) => ({
   nodes: [],
   edges: [],
   loading: false,
+
+  // Execution state
+  activeRunId: null,
+  runStatus: null,          // 'running' | 'completed' | 'failed' | null
+  nodeStatuses: {},         // { [nodeId]: { statuses: [{status, count}] } }
+  uploading: false,
+  uploadError: null,
+  pollInterval: null,
 
   loadWorkflow: async (workflowId) => {
     set({ loading: true });
@@ -144,6 +153,66 @@ const useCanvasStore = create((set, get) => ({
       ? await workflowService.unpublishWorkflow(workflowId)
       : await workflowService.publishWorkflow(workflowId);
     set({ isPublished: updated.is_published });
+  },
+
+  // Upload files and trigger a workflow run
+  triggerRun: async (files) => {
+    const { workflowId } = get();
+    set({ uploading: true, uploadError: null });
+    try {
+      // Upload all files, collect document IDs
+      const uploadPromises = Array.from(files).map((f) =>
+        executionService.uploadDocument(f).then((res) => res.data.id)
+      );
+      const documentIds = await Promise.all(uploadPromises);
+
+      // Create run
+      const { data: run } = await executionService.createRun(workflowId, documentIds);
+      set({ activeRunId: run.id, runStatus: 'running', nodeStatuses: {}, uploading: false });
+
+      // Start polling for status
+      get()._startPolling(run.id);
+    } catch (err) {
+      set({ uploading: false, uploadError: err.message || 'Upload failed' });
+    }
+  },
+
+  _startPolling: (runId) => {
+    const { pollInterval } = get();
+    if (pollInterval) clearInterval(pollInterval);
+
+    const interval = setInterval(async () => {
+      try {
+        const [runRes, statusRes] = await Promise.all([
+          executionService.getRun(runId),
+          executionService.getNodeStatuses(runId),
+        ]);
+
+        // Build nodeStatuses map: { [nodeId]: [{status, count}] }
+        const nodeStatuses = {};
+        for (const item of statusRes.data) {
+          if (!nodeStatuses[item.node_id]) nodeStatuses[item.node_id] = [];
+          nodeStatuses[item.node_id].push({ status: item.status, count: Number(item.count) });
+        }
+
+        set({ runStatus: runRes.data.status, nodeStatuses });
+
+        if (runRes.data.status !== 'running') {
+          clearInterval(interval);
+          set({ pollInterval: null });
+        }
+      } catch (_) {
+        // Silently ignore polling errors
+      }
+    }, 2000);
+
+    set({ pollInterval: interval });
+  },
+
+  clearRun: () => {
+    const { pollInterval } = get();
+    if (pollInterval) clearInterval(pollInterval);
+    set({ activeRunId: null, runStatus: null, nodeStatuses: {}, pollInterval: null, uploadError: null });
   },
 }));
 

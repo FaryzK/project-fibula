@@ -1,4 +1,5 @@
 import { Handle, Position } from '@xyflow/react';
+import useCanvasStore from '../../stores/useCanvasStore';
 
 // Category colour accents
 const CATEGORY_COLORS = {
@@ -24,9 +25,37 @@ const NODE_CATEGORIES = {
   HTTP:            'Output',
 };
 
-function FibulaNode({ data, selected }) {
+// Derive a single display status from the node's status array for the run
+function deriveNodeRunStatus(statusList) {
+  if (!statusList || statusList.length === 0) return null;
+  const statuses = statusList.map((s) => s.status);
+  if (statuses.includes('processing')) return 'processing';
+  if (statuses.includes('failed')) return 'failed';
+  if (statuses.includes('held')) return 'held';
+  if (statuses.every((s) => s === 'completed')) return 'completed';
+  return null;
+}
+
+const RUN_STATUS_STYLES = {
+  processing: 'bg-amber-100 text-amber-700 border-amber-300',
+  completed:  'bg-green-100 text-green-700 border-green-300',
+  failed:     'bg-red-100 text-red-700 border-red-300',
+  held:       'bg-orange-100 text-orange-700 border-orange-300',
+};
+
+const RUN_STATUS_LABELS = {
+  processing: '⟳',
+  completed:  '✓',
+  failed:     '✕',
+  held:       '⏸',
+};
+
+function FibulaNode({ id, data, selected }) {
   const category = NODE_CATEGORIES[data.nodeType] || 'Execution';
   const accent = CATEGORY_COLORS[category];
+
+  const nodeStatuses = useCanvasStore((s) => s.nodeStatuses);
+  const runStatus = deriveNodeRunStatus(nodeStatuses[id]);
 
   return (
     <div
@@ -40,8 +69,17 @@ function FibulaNode({ data, selected }) {
       <div className={`h-1 rounded-t-lg ${accent}`} />
 
       <div className="px-3 py-2">
-        {/* Category badge */}
-        <span className="text-xs text-gray-400 dark:text-gray-500">{category}</span>
+        {/* Category badge + run status badge */}
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-gray-400 dark:text-gray-500">{category}</span>
+          {runStatus && (
+            <span
+              className={`text-xs font-bold px-1.5 py-0.5 rounded border ${RUN_STATUS_STYLES[runStatus]}`}
+            >
+              {RUN_STATUS_LABELS[runStatus]}
+            </span>
+          )}
+        </div>
         {/* Node name */}
         <p className="text-sm font-medium text-gray-900 dark:text-white mt-0.5 truncate">
           {data.label}
