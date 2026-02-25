@@ -8,6 +8,8 @@ const authRoutes = require('./src/routes/auth.routes');
 const workflowRoutes = require('./src/routes/workflow.routes');
 const documentRoutes = require('./src/routes/document.routes');
 const runRoutes = require('./src/routes/run.routes');
+const splittingRoutes = require('./src/routes/splitting.routes');
+const categorisationRoutes = require('./src/routes/categorisation.routes');
 const errorMiddleware = require('./src/middleware/error.middleware');
 
 const env = require('./src/config/env');
@@ -28,6 +30,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/workflows', workflowRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/runs', runRoutes);
+app.use('/api/splitting-instructions', splittingRoutes);
+app.use('/api/categorisation-prompts', categorisationRoutes);
 
 app.use(errorMiddleware);
 

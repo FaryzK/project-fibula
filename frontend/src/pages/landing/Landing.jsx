@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import WorkflowsTab from './WorkflowsTab';
+import SplittingTab from './SplittingTab';
+import CategorisationTab from './CategorisationTab';
 import useAuthStore from '../../stores/useAuthStore';
 import supabase from '../../services/supabase';
-import { useNavigate } from 'react-router-dom';
 
 const TABS = [
   { id: 'workflows', label: 'Workflows' },
@@ -15,10 +17,22 @@ const TABS = [
 ];
 
 function Landing() {
-  const [activeTab, setActiveTab] = useState('workflows');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialTab = searchParams.get('tab') || 'workflows';
+  const [activeTab, setActiveTab] = useState(initialTab);
+
   const clearSession = useAuthStore((s) => s.clearSession);
   const user = useAuthStore((s) => s.user);
   const navigate = useNavigate();
+
+  // Keep URL in sync with active tab
+  useEffect(() => {
+    if (activeTab !== 'workflows') {
+      setSearchParams({ tab: activeTab }, { replace: true });
+    } else {
+      setSearchParams({}, { replace: true });
+    }
+  }, [activeTab, setSearchParams]);
 
   async function handleLogout() {
     await supabase.auth.signOut();
@@ -64,7 +78,9 @@ function Landing() {
       {/* Tab content */}
       <main className="flex-1 p-6">
         {activeTab === 'workflows' && <WorkflowsTab />}
-        {activeTab !== 'workflows' && (
+        {activeTab === 'splitting' && <SplittingTab />}
+        {activeTab === 'categorisation' && <CategorisationTab />}
+        {!['workflows', 'splitting', 'categorisation'].includes(activeTab) && (
           <div className="text-gray-400 dark:text-gray-500 text-sm">Coming soon</div>
         )}
       </main>

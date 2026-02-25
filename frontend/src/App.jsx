@@ -4,6 +4,8 @@ import AuthCallback from './pages/auth/AuthCallback';
 import ProtectedRoute from './components/ProtectedRoute';
 import Landing from './pages/landing/Landing';
 import WorkflowCanvas from './pages/canvas/WorkflowCanvas';
+import SplittingEdit from './pages/config/SplittingEdit';
+import CategorisationEdit from './pages/config/CategorisationEdit';
 
 function App() {
   return (
@@ -24,6 +26,22 @@ function App() {
           element={
             <ProtectedRoute>
               <WorkflowCanvas />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/app/splitting/:id"
+          element={
+            <ProtectedRoute>
+              <SplittingEdit />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/app/categorisation/:id"
+          element={
+            <ProtectedRoute>
+              <CategorisationEdit />
             </ProtectedRoute>
           }
         />

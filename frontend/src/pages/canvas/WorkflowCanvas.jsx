@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ReactFlow,
   Background,
@@ -13,6 +13,7 @@ import '@xyflow/react/dist/style.css';
 import useCanvasStore from '../../stores/useCanvasStore';
 import nodeTypes from '../../utils/nodeTypes';
 import NodePalette from '../../components/canvas/NodePalette';
+import NodePanel from '../../components/canvas/NodePanel';
 
 const RUN_STATUS_BANNER = {
   running:   { bg: 'bg-amber-50 border-amber-200 text-amber-800', label: '⟳ Running…' },
@@ -22,9 +23,11 @@ const RUN_STATUS_BANNER = {
 
 function CanvasInner() {
   const { id: workflowId } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { getViewport } = useReactFlow();
+  const { getViewport, setCenter } = useReactFlow();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [selectedNode, setSelectedNode] = useState(null); // node open in NodePanel
   const [renamingTitle, setRenamingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState('');
   const fileInputRef = useRef(null);
@@ -45,6 +48,19 @@ function CanvasInner() {
     setTitleValue(workflowName);
   }, [workflowName]);
 
+  // Deep link: ?node=:nodeId — centre on that node and open its panel
+  useEffect(() => {
+    const targetNodeId = searchParams.get('node');
+    if (!targetNodeId || nodes.length === 0) return;
+
+    const target = nodes.find((n) => n.id === targetNodeId);
+    if (!target) return;
+
+    // Centre viewport on the node
+    setCenter(target.position.x + 80, target.position.y + 40, { zoom: 1.2, duration: 600 });
+    setSelectedNode(target);
+  }, [searchParams, nodes, setCenter]);
+
   const handleAddNode = useCallback(async (nodeType, label) => {
     const { x, y, zoom } = getViewport();
     const centerX = (-x + window.innerWidth / 2) / zoom;
@@ -61,6 +77,12 @@ function CanvasInner() {
       nodes.filter((n) => n.selected).forEach((n) => deleteNode(n.id));
     }
   }, [nodes, deleteNode]);
+
+  // Double-click a node → open NodePanel
+  const handleNodeDoubleClick = useCallback((_, node) => {
+    setSelectedNode(node);
+    setPaletteOpen(false);
+  }, []);
 
   async function commitTitle() {
     if (titleValue.trim() && titleValue.trim() !== workflowName) {
@@ -118,7 +140,6 @@ function CanvasInner() {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Upload & Run button */}
           <input
             ref={fileInputRef}
             type="file"
@@ -131,7 +152,6 @@ function CanvasInner() {
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading || runStatus === 'running'}
             className="text-sm px-3 py-1 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-md font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
-            title="Upload documents and run"
           >
             {uploading ? 'Uploading…' : '↑ Upload & Run'}
           </button>
@@ -152,7 +172,7 @@ function CanvasInner() {
             {isPublished ? 'Unpublish' : 'Publish'}
           </button>
           <button
-            onClick={() => setPaletteOpen((o) => !o)}
+            onClick={() => { setPaletteOpen((o) => !o); setSelectedNode(null); }}
             className="w-8 h-8 flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-lg font-bold transition"
             title="Add node"
           >
@@ -165,9 +185,7 @@ function CanvasInner() {
       {(banner || uploadError) && (
         <div
           className={`flex items-center justify-between px-4 py-1.5 border-b text-sm ${
-            uploadError
-              ? 'bg-red-50 border-red-200 text-red-800'
-              : banner.bg
+            uploadError ? 'bg-red-50 border-red-200 text-red-800' : banner.bg
           }`}
         >
           <span>{uploadError || banner.label}</span>
@@ -177,7 +195,7 @@ function CanvasInner() {
         </div>
       )}
 
-      {/* Canvas + Palette */}
+      {/* Canvas + sidebars */}
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1">
           <ReactFlow
@@ -189,6 +207,7 @@ function CanvasInner() {
             onNodeDragStop={onNodeDragStop}
             onConnect={onConnect}
             onEdgeClick={handleEdgeClick}
+            onNodeDoubleClick={handleNodeDoubleClick}
             fitView
             proOptions={{ hideAttribution: true }}
           >
@@ -198,7 +217,14 @@ function CanvasInner() {
           </ReactFlow>
         </div>
 
-        {paletteOpen && (
+        {selectedNode && (
+          <NodePanel
+            node={selectedNode}
+            onClose={() => setSelectedNode(null)}
+          />
+        )}
+
+        {paletteOpen && !selectedNode && (
           <NodePalette
             onAddNode={handleAddNode}
             onClose={() => setPaletteOpen(false)}
