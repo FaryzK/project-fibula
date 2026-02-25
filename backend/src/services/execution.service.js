@@ -13,7 +13,8 @@ const categorisationService = require('./categorisation.service');
 const extractorService = require('./extractor.service');
 const dataMapperService = require('./dataMapper.service');
 const reconciliationService = require('./reconciliation.service');
-const { evaluateConditions, applyAssignments } = require('../utils/expression');
+const { evaluateConditions, applyAssignments, resolveValue } = require('../utils/expression');
+const axios = require('axios');
 
 /**
  * Build an adjacency map: { sourceNodeId: [{ targetNodeId, sourcePort, targetPort }] }
@@ -184,6 +185,59 @@ async function processNode(node, metadata, workflowRunId, docExecutionId, workfl
         nodeId: node.id,
       });
       return result;
+    }
+
+    case 'HTTP': {
+      const url = resolveValue(config.url, metadata);
+      const method = (config.method || 'POST').toUpperCase();
+
+      // Resolve headers
+      const resolvedHeaders = {};
+      for (const [k, v] of Object.entries(config.headers || {})) {
+        resolvedHeaders[k] = resolveValue(v, metadata);
+      }
+
+      // Resolve body (recursively resolve string values within JSON body)
+      function resolveBody(obj) {
+        if (typeof obj === 'string') return resolveValue(obj, metadata);
+        if (Array.isArray(obj)) return obj.map(resolveBody);
+        if (obj && typeof obj === 'object') {
+          const out = {};
+          for (const [k, v] of Object.entries(obj)) out[k] = resolveBody(v);
+          return out;
+        }
+        return obj;
+      }
+      const resolvedBody = config.body ? resolveBody(config.body) : undefined;
+
+      let responseStatus;
+      let responseBody;
+      try {
+        const response = await axios({
+          method,
+          url,
+          headers: resolvedHeaders,
+          data: resolvedBody,
+          validateStatus: null, // don't throw on non-2xx
+        });
+        responseStatus = response.status;
+        responseBody = response.data;
+
+        if (responseStatus < 200 || responseStatus >= 300) {
+          throw new Error(`HTTP ${responseStatus}: ${JSON.stringify(responseBody)}`);
+        }
+      } catch (err) {
+        throw new Error(`HTTP node request failed: ${err.message}`);
+      }
+
+      return {
+        type: 'continue',
+        outputMetadata: {
+          ...metadata,
+          _http_response: { status: responseStatus, body: responseBody },
+        },
+        outputPort: 'default',
+      };
     }
 
     default:

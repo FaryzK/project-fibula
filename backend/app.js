@@ -14,6 +14,7 @@ const documentFolderRoutes = require('./src/routes/documentFolder.routes');
 const extractorRoutes = require('./src/routes/extractor.routes');
 const { setsRouter: dataMapSetsRoutes, rulesRouter: dataMapRulesRoutes } = require('./src/routes/dataMapper.routes');
 const reconciliationRoutes = require('./src/routes/reconciliation.routes');
+const webhookRoutes = require('./src/routes/webhook.routes');
 const errorMiddleware = require('./src/middleware/error.middleware');
 
 const env = require('./src/config/env');
@@ -41,6 +42,7 @@ app.use('/api/extractors', extractorRoutes);
 app.use('/api/data-map-sets', dataMapSetsRoutes);
 app.use('/api/data-map-rules', dataMapRulesRoutes);
 app.use('/api/reconciliation-rules', reconciliationRoutes);
+app.use('/api/webhooks', webhookRoutes);
 
 app.use(errorMiddleware);
 

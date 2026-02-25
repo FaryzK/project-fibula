@@ -4,6 +4,18 @@ const TABLE = 'document_executions';
 const LOG_TABLE = 'node_execution_logs';
 
 module.exports = {
+  async create({ workflowRunId, documentId, metadata = '{}' }) {
+    const [row] = await db(TABLE)
+      .insert({
+        workflow_run_id: workflowRunId,
+        document_id: documentId || null,
+        status: 'pending',
+        metadata: typeof metadata === 'string' ? metadata : JSON.stringify(metadata),
+      })
+      .returning('*');
+    return row;
+  },
+
   async createMany(workflowRunId, documentIds) {
     const rows = documentIds.map((docId) => ({
       workflow_run_id: workflowRunId,

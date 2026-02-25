@@ -33,4 +33,8 @@ async function remove(id) {
   await db('nodes').where({ id }).delete();
 }
 
-module.exports = { findByWorkflowId, create, update, remove };
+async function findById(id) {
+  return db('nodes').where({ id }).first();
+}
+
+module.exports = { findByWorkflowId, create, update, remove, findById };

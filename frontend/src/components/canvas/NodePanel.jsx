@@ -295,6 +295,172 @@ function SetValueConfig({ config, onChange }) {
   );
 }
 
+const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+
+function HTTPConfig({ config, onChange }) {
+  const headers = config.headers || {};
+  const headerEntries = Object.entries(headers);
+  const bodyText = config._bodyText !== undefined
+    ? config._bodyText
+    : (config.body ? JSON.stringify(config.body, null, 2) : '');
+
+  function updateHeaders(entries) {
+    const obj = {};
+    for (const [k, v] of entries) { if (k) obj[k] = v; }
+    onChange({ ...config, headers: obj });
+  }
+
+  function setHeader(i, key, val) {
+    const entries = [...headerEntries];
+    entries[i] = [key, val];
+    updateHeaders(entries);
+  }
+
+  function addHeader() {
+    updateHeaders([...headerEntries, ['', '']]);
+  }
+
+  function removeHeader(i) {
+    updateHeaders(headerEntries.filter((_, idx) => idx !== i));
+  }
+
+  function handleBodyChange(text) {
+    let parsed = undefined;
+    try { parsed = text ? JSON.parse(text) : undefined; } catch (_) { /* invalid JSON while typing */ }
+    onChange({ ...config, body: parsed, _bodyText: text });
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* URL */}
+      <div>
+        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">URL</label>
+        <input
+          value={config.url || ''}
+          onChange={(e) => onChange({ ...config, url: e.target.value })}
+          placeholder="https://api.example.com/endpoint"
+          className="w-full px-2 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+        />
+      </div>
+
+      {/* Method */}
+      <div>
+        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Method</label>
+        <select
+          value={config.method || 'POST'}
+          onChange={(e) => onChange({ ...config, method: e.target.value })}
+          className="w-full px-2 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none"
+        >
+          {HTTP_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+        </select>
+      </div>
+
+      {/* Headers */}
+      <div>
+        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Headers</label>
+        <div className="space-y-1.5">
+          {headerEntries.map(([k, v], i) => (
+            <div key={i} className="flex gap-1 items-center">
+              <input
+                value={k}
+                onChange={(e) => setHeader(i, e.target.value, v)}
+                placeholder="Key"
+                className="w-24 px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none font-mono"
+              />
+              <input
+                value={v}
+                onChange={(e) => setHeader(i, k, e.target.value)}
+                placeholder="Value or $document.field"
+                className="flex-1 px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none font-mono"
+              />
+              <button onClick={() => removeHeader(i)} className="text-red-400 hover:text-red-600 text-base leading-none px-1">×</button>
+            </div>
+          ))}
+          <button onClick={addHeader} className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline">
+            + Add header
+          </button>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div>
+        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+          Body <span className="font-normal text-gray-400">(JSON)</span>
+        </label>
+        <textarea
+          value={bodyText}
+          onChange={(e) => handleBodyChange(e.target.value)}
+          rows={5}
+          placeholder={'{\n  "invoiceNumber": "{{ $document.invoiceNumber }}"\n}'}
+          className="w-full px-2 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-1 focus:ring-indigo-500 font-mono resize-y"
+        />
+        <p className="text-xs text-gray-400 mt-1">
+          Use <span className="font-mono">$document.field</span> or <span className="font-mono">{'{{ expr }}'}</span> in values.
+        </p>
+      </div>
+
+      <p className="text-xs text-gray-400">
+        On non-2xx or network error the document is marked <span className="font-mono text-red-500">failed</span>.
+        Response is appended to metadata as <span className="font-mono">_http_response</span>.
+      </p>
+    </div>
+  );
+}
+
+function WebhookConfig({ config, onChange, nodeId }) {
+  const webhookUrl = nodeId
+    ? `${window.location.origin.replace(':5173', ':3000')}/api/webhooks/${nodeId}/trigger`
+    : '(save the node first)';
+
+  function copyUrl() {
+    navigator.clipboard.writeText(webhookUrl);
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Generated URL */}
+      <div>
+        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+          Webhook URL
+        </label>
+        <div className="flex gap-1.5">
+          <input
+            readOnly
+            value={webhookUrl}
+            className="flex-1 px-2 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-gray-50 dark:bg-gray-700/50 text-gray-600 dark:text-gray-400 outline-none font-mono"
+          />
+          <button
+            onClick={copyUrl}
+            className="px-2 py-1 text-xs bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-900/30 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 rounded border border-indigo-200 dark:border-indigo-700 transition"
+          >
+            Copy
+          </button>
+        </div>
+        <p className="text-xs text-gray-400 mt-1">
+          External systems POST to this URL to trigger the workflow. No authentication required.
+        </p>
+      </div>
+
+      {/* Description */}
+      <div>
+        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+          Description <span className="font-normal text-gray-400">(optional)</span>
+        </label>
+        <input
+          value={config.description || ''}
+          onChange={(e) => onChange({ ...config, description: e.target.value })}
+          placeholder="e.g. Inbound invoice from ERP"
+          className="w-full px-2 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-1 focus:ring-indigo-500"
+        />
+      </div>
+
+      <p className="text-xs text-gray-400">
+        JSON payload fields become document metadata. No input handle — this is a trigger node.
+      </p>
+    </div>
+  );
+}
+
 // ─── Main NodePanel ──────────────────────────────────────────────────────────
 
 function NodePanel({ node, onClose }) {
@@ -340,7 +506,8 @@ function NodePanel({ node, onClose }) {
   }
 
   const hasConfig = ['SPLITTING', 'CATEGORISATION', 'IF', 'SWITCH', 'SET_VALUE',
-    'DOCUMENT_FOLDER', 'EXTRACTOR', 'DATA_MAPPER', 'RECONCILIATION'].includes(nodeType);
+    'DOCUMENT_FOLDER', 'EXTRACTOR', 'DATA_MAPPER', 'RECONCILIATION',
+    'HTTP', 'WEBHOOK'].includes(nodeType);
 
   return (
     <div className="w-80 bg-white dark:bg-gray-800 border-l border-gray-200 dark:border-gray-700 flex flex-col h-full">
@@ -595,6 +762,14 @@ function NodePanel({ node, onClose }) {
               </p>
             )}
           </div>
+        )}
+
+        {nodeType === 'HTTP' && (
+          <HTTPConfig config={config} onChange={setConfig} />
+        )}
+
+        {nodeType === 'WEBHOOK' && (
+          <WebhookConfig config={config} onChange={setConfig} nodeId={node.id} />
         )}
 
         {!hasConfig && (
