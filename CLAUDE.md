@@ -15,9 +15,26 @@ Workflow-first ETL platform for document processing. Users build workflows on a 
 
 ## Structure
 Monorepo:
-- /frontend  React app
-- /backend   Express API
-- CLAUDE.md  this file
+- /frontend        React app
+- /backend         Express API
+- /requirements    Feature specifications — read these before implementing any feature
+- CLAUDE.md        this file
+
+## Requirements
+All feature specs live in `/requirements/`. **Always read the relevant file before implementing any node, page, or service.**
+
+| File | Covers |
+|---|---|
+| `Project Fibula Overview, Landing Page, Nodes.txt` | Platform overview, landing page tabs, all node types summary |
+| `Workflow Canvas Page.txt` | Canvas interactions, node placement, linking, multi-select |
+| `Trigger Node and IF & Switch Node and Set Value node.txt` | Manual upload, IF, SWITCH (+ fallback port), Set Value nodes |
+| `Document Splitting & Categorisation Config node.txt` | Splitting and categorisation config nodes and their setup pages |
+| `Service Node - Extractor Node.txt` | Extractor schema, VLM extraction, training feedback, held documents |
+| `Service Node - Data Mapper Rule.txt` | Data map sets, data map rules, lookup + calculation logic |
+| `Service Node - Reconciliation.txt` | Reconciliation rules, matching sets, comparison + tolerances |
+| `Service Node - Document Folder.txt` | Document folder instances, hold + send-out behaviour |
+| `Webhook Node.txt` | Inbound webhook trigger node |
+| `HTTP Node.txt` | Outbound HTTP export node |
 
 ## Dev Commands
 - cd frontend && npm run dev       start frontend (Vite dev server)
