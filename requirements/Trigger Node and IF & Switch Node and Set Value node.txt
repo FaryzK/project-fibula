@@ -1,0 +1,31 @@
+There are 5 classes of nodes, and each class has a different usage. This document covers trigger node and pure execution node
+
+Trigger node
+Example: manual upload
+
+Pure execution node
+Example: transform JSON, evaluate expression
+
+Config node
+Example: define system prompt once and reuse
+
+Service node
+Example: reconciliation dashboard showing matched documents, extractor node, data mapper
+
+Webhook node (mainly used for sending events when something happens)
+
+HTTP node (mainly used for exporting data)
+
+ 
+
+Trigger node is quite straight-forward. For now it is just manual upload and user can drag and drop a file over a node. When you open this node, you can see the input document and the output which is also a document. That is all, nothing fancy
+
+Pure execution node allows user to add json expressions which will return an output. 
+
+IF & SWITCH nodes are pure execution node. While the input of these nodes is the document and its metadata, the evaluation is typically done on its metadata. IF nodes only has 1 condition. If the condition is true, it passes the document and metadata through the true signal, and if it is false, they are sent through the false signals. Thus, the menu for IF nodes shows the input into the IF node (document and its metadata), the conditions that user can configure, and the output,which has 2 tabs. True tab and False tab. The correct tab will be populated with the output based on the evaluation. User can configure by writing the validation rules for a condition. For example, document.totalAmount does not exist, document.subTotal is less than 100. For fields, users can either hardcode it or should be able to see the document metadata, drag the tags to the expression fields and manipulate them with json expressions, such as {{ new Date($document.date.dateString).getTime() }}, select the correct operator, where users have to first select whether they want to compare strings, numbers, date & time, or boolean. For string comparison, user can select select equals to, does not equal to, contain, does not contain For number and date time comparison, user can select equals to, does not equal to, more than, less than, more than or equal to, less than or equals to. For boolean, user can select true or false. For string, number, and date, user can also define value. This can be a json expression using input from document metadata or a hardcoded value. Users can chain multiple validation rules with only AND or OR. When a document comes in with metadata, the IF node will run, and output the document and metadata to true or false branch based on the evaluated condition.
+
+SWITCH node behaves similarly, just that each SWITCH node is a case. User can define up to 10 cases. Each case only has 1 validation rule unlike an IF node which can have multiple validation rule for it. The SWITCH node will keep evaluating until it finds a true case, and outputs that signal. If a user has 5 switch cases, the node has 5 outgoing points. And if a document and its metadata is lets say evaluated to case 3, the document and its metadata is sent through the 3rd outgoing point.
+
+In addition to the case outputs, the SWITCH node always has a fallback output port. If none of the defined cases evaluate to true, the document and its metadata are sent through the fallback port. The fallback port is always present regardless of how many cases are configured. It is recommended to connect the fallback port to a document folder node so that unmatched documents can be reviewed and triaged manually.
+
+SET value node allows user to enrich metadata by setting a value. The input is a document, and can include metadata, the output will be the document and enriched metadata. Users can set up the SET value node by defining the field they want to update, and the value they want to populate that will then be used to enriched the document metadata

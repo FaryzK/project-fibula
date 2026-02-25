@@ -1,0 +1,41 @@
+There are 5 classes of nodes, and each class has a different usage. This document covers service node - extractor node
+
+Trigger node
+Example: manual upload
+
+Pure execution node
+Example: transform JSON, evaluate expression
+
+Config node
+Example: define system prompt once and reuse
+
+Service node
+Example: reconciliation dashboard showing matched documents, extractor node, data mapper
+
+Webhook node (mainly used for sending events when something happens)
+
+HTTP node (mainly used for exporting data)
+
+A service node includes a dedicate service module for the user. The extractor node is a service. It takes a document as input, processes it, and outputs a document with the extracted data as metadata. It also attached the extractor name in the metadata. It uses a VLM, a schema, and training feedback to “extract” the correct data by generating  the right values.
+
+An initial setup is required to provide the schema. Users can go to the landing page to the extractor tab. Here users will see a list of extractors created by the user and the extractor name. To create a new extractor, user can press “+New Extractor”. They will then be directed to a page where they can define the extractor name and schema.
+
+The schema contains to kind of information. Header fields and table. To define header fields, users can add a new field and define the field name and field description. They can define as many field names as they want. To define table, they first have to create a table type. The table type needs to be named with the table type description. Then the headers for the table can then be named with the table description. The reason why we need table type is because tables can be fragmented in document. Instead of having 100 objects of the same table, the table type will combine them so that we will see 1 view of containing the rows of the 100 tables. This will be used later in the reconciliation node to make matching and comparison easy for us. Do note that during inference, we would still like to understand the individual tables data too.
+
+After the field names and descriptions has been defined, and after the table types name, table type descriptions, and respective table headers and table header description has been created, the initial schema is defined. Do note that it is just all text as this point.
+
+Once schema is created, users can start giving training feedback. Giving of feedback is done by uploading a document and passing the document into VLM with the schema. The VLM will return the extracted values and users see what is extracted. If a field has been extracted wrong, or a table has been extracted wrongly (e.g. wrong column), users can give feedback by clicking either the field or cells in the table, and give feedback in natural language such as “Do not capture # in invoice number” or “Capture the Amount column not the unit price” or “Do not capture this table here which is just an illustration”. Once they give feedback, a training feedback instance is stored. The training feedback instance contains the original document, and the feedback given for the table or the field. Users can hit the re-extract button to see if training is successful. This time, when user hits the re-extract button, the document, schema, and training feedback instance is sent for VLM to generate data the extracted data into the schema. Do note that there can be many training feedback. We do not send all training feedback. It is important for us to send the training feedback where the document has the highest similarity score (image embedding) to the document that we want to extract. Users can see all the training feedback instance they have created, and they can see which feedback instance was used in an inference
+
+User do not have to give training feedback right when the schema is created. They can already use the node. They can go into workflow and choose an extractor node and select the extractor by dropdown by selecting the name of the extractor. It accepts a document as input, use VLM to generate extracted data, and output a document containing its extracted data as metadata. It also adds the extractor name in the metadata
+
+However, do note that there is a usecase where in a live workflow, users want to capture incorrectly extracted document. One of the signals is by identifying whether a data point is missing. For example, we always know that we expect the field invoice number or the invoice table. In that case,  in the extractor, we can update schema to toggle that the field or table is mandatory. Then, if a VLM cannot find the field value or table to generate, the document will remain in the extractor service under held documents and will not be output. Users can come in here to verify. For example, if invoicenumber is missing, or table is missing, they can populate the data and give feedback such as, capture the invoice which is found on top right of this page, or capture table found in the center of the page 2. And press a button called give feedback. This creates a feedback instance so that next time a similar document is uploaded, there is context to help capture invoice or the table. After feedback is given, user can click like a send out button to output document to next node
+
+There should also be an extractor-wide option to toggle whether to hold all documents. If that toggle is clicked then any document passed through it will be held, and not be output. User can come in and manually send out the held documents.
+
+When an extractor node is clicked, we can see the input document and metadata, and the output document and metadata with the extracted one. In the middle we can define the extractor name from dropdown. We can also click to navigate to the extractor service where we can see the json schema, the held documents and also the training feedback instances
+
+We should also show the list of extractor node being used in workflow, and clicking on one will direct to user to node in a workflow.
+
+ 
+
+Do note that the extractor node plays an important role when using the reconciliation node. The reconciliation node requires documents to pass an extractor node since it needs to know the extraction schema. It will need to know which schema is the anchor, which are the target documents, how to use the schema to link header and table line items, and final comparison.

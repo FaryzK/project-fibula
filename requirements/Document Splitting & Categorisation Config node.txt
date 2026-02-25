@@ -1,0 +1,27 @@
+There are 5 classes of nodes, and each class has a different usage. This document covers config node
+
+Trigger node
+Example: manual upload
+
+Pure execution node
+Example: transform JSON, evaluate expression
+
+Config node
+Example: define system prompt once and reuse
+
+Service node
+Example: reconciliation dashboard showing matched documents, extractor node, data mapper
+
+Webhook node (mainly used for sending events when something happens)
+
+HTTP node (mainly used for exporting data)
+
+ 
+
+There are 2 config nodes, Document splitting and Document Categorisation config node. These nodes require setting up in a different screen before their nodes can be configured.
+
+For the document splitting node, users would need to go to the document splitting tab found on the landing page. In this tab, user can see a list of instructions that define how the system can split a document. It consist of prompt name and truncated version of the splitting instructions. Users can click “Add new splitting instructions” to add a new splitting instruction. When user clicks on the button, they will be navigated to a page to add a splitting instruction e.g. “Split document into individual invoices.” or “Split document into its invoices and PO” or “Split documents into bank statement, identity card, and onboarding forms”. User can then add a name and press create. The setup is done. In the workflow canvas page, when a user adds a Document Splitting node, and double click on it, in the middle he will see option to select a Splitting instruction. It would be a dropdown showing the instruction name and user can select one. If there is not splitting instruction, there will be option to create one and pressing the button will navigate user to prompt split instruction create page where they can define name and splitting instructions. Once a prompt splitting instruction has been chosen for the node, the node is ready to be used. Do note that in the Document splitting page, when we see list of splitting instructions created, clicking on it will allow us to edit the name and instructions. What is more is that it even shows a list of workflow name and document splitting nodes using this instruction. Using can click and then navigate to the workflow and see the node in his view. Thus it is important to allow URL to navigate to a specific node in a workflow. When the workflow runs, a document will be input for this node. The system then sends the document, the splitting instructions configured, and a system prompt that we will create to ensure that we get back page numbers. The system then uses these page numbers to split the document, and outputs many documents. Users should be able to delete a splitting instruction but before they do it, system ensures that they are not used anywhere. That is why it is important to have a list of nodes in workflows using them so they can easily be transitioned to a different splitting instruction and delete the splitting instruction once no nodes are using it anymore.
+
+ 
+
+For the Document categorisation node, the setup is similar. Before the node is ready for use in the workflow canvas, the user has to go to the document categorisation tab in the landing page. Here they will see a list of document categorisation instruction that they have set. They can press Add categorisation instruction, which will navigate them to a page where they can set the categorisation name and the categorisation label, and categorisation label details. They can have more than 1 categorisation label and details. For example, categorsiation label = INVOICE, categorsation detail = A document has Invoice Number only, and categorisation label = PO, categorisation detail = A document has Invoice and PO number. They can add up to 20 categorisation label. Once done, they can go into a workflow, place down a Document Categorisation node, and select the categorisation instruction name to use in the node menu. When workflow runs, we take the document in input, use the categorisation name, categorisation label and its description, and send them to LLM to get a category. The category will then be attached to metadata of the document as output. Similarly, when I go to the document categorisation tab and see a list of categorisation instruction, i can click on one to navigate to page to edit it. In that page, I see a list of workflows and the node that is using it. Clicking on it navigates me to the workflow page and puts the node on the center of the screen.

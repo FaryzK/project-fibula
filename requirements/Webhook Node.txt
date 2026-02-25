@@ -1,0 +1,34 @@
+There are 5 classes of nodes, and each class has a different usage. This document covers the webhook node.
+
+Trigger node
+Example: manual upload
+
+Pure execution node
+Example: transform JSON, evaluate expression
+
+Config node
+Example: define system prompt once and reuse
+
+Service node
+Example: reconciliation dashboard showing matched documents, extractor node, data mapper
+
+Webhook node (mainly used for sending events when something happens)
+
+HTTP node (mainly used for exporting data)
+
+
+The webhook node is a trigger-class node that allows external systems to start a workflow by sending an HTTP request to a system-generated URL.
+
+When a user adds a webhook node to the canvas, the system automatically generates a unique inbound URL for that node. This URL is displayed in the node menu and can be copied. When an external system sends an HTTP POST request to this URL, the webhook node is triggered and the workflow begins.
+
+The payload of the incoming POST request is passed into the workflow as the document metadata. If the payload includes a file (e.g. multipart form data), the file is treated as the input document. If the payload is JSON only, the metadata is populated with the JSON fields and there is no initial document file.
+
+Node menu for webhook node:
+- Displays the generated webhook URL with a copy button
+- Shows the expected input (inbound HTTP POST)
+- Shows the output (document and/or metadata derived from the payload)
+- Optional description field so the user can note what this webhook is for
+
+The webhook node has no connecting in point since it is a trigger. It only has a connecting out point to pass the document and metadata to the next node.
+
+In published mode, any POST to the webhook URL triggers the workflow immediately. In unpublished mode, the same execution rules apply as other trigger nodes: drop-only stages the output at the next node without running it, and run-to-node runs the workflow up to the selected target node.

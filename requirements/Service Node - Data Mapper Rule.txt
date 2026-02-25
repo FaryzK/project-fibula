@@ -1,0 +1,60 @@
+There are 5 classes of nodes, and each class has a different usage. This document covers service node - data mapper
+
+Trigger node
+Example: manual upload
+
+Pure execution node
+Example: transform JSON, evaluate expression
+
+Config node
+Example: define system prompt once and reuse
+
+Service node
+Example: reconciliation dashboard showing matched documents, extractor node, data mapper
+
+Webhook node (mainly used for sending events when something happens)
+
+HTTP node (mainly used for exporting data)
+
+The data mapper rule node allows data to be standardised so that they can be easily reconciled. For example, if vendor forgots to put in vendor code, the data mapper rule node can help fill in the vendor code based on the extracted vendor name, and looking up in the table for vendor master data.
+
+Before using the data mapper rule node, data mapper needs to be set up consiting of data map set and data map rules. Users can click the data mapper tab on landing page to find views to toggle between data map set and data map rules.
+
+Users starts with setting up data map set. In the data map set, users will see a list of data map set, such as Vendor Master Data, or Customer Master Data, or Conversion List. User can create a data map set by uploading a .csv, or .json, or manual upload.
+
+For uploading by .csv or .json, system detects first row as the header, and extract those. For example, VendorName, VendorCode. Then it will create records based on the .csv or .json.
+
+For manual upload, users can define the headers for the data map set, and define the values and press create.
+
+Users also define name for data map set.
+
+Once data map set has been created, user can create a rule. This can be done by going to the data map rule view, and seeing a list of rules. User can create a new rule. In a data map rule, user can configure the rule name. They can then configure how the lookup happens and how it should populate a document metadata
+
+First, the data mapper rule needs to know which value in schema to update. So I need to know which extractor schema to use. Then I need to know if I am updating a header item or a table columns. For example, VendorCode header or SKUCodes table columns. 
+
+Then, the user then selects which data map set, and column the data should be derived from. For example, BPCode and ItemCodes.
+
+Defining how the system should populate schema based on column in data map set, and the schema field / tag name is known as a map target
+
+Then user would need to define how the lookup should happen. For the case where I want to update the VendorCode with BPCode, I can tell the system to lookup the BPName column in the data map set, with the VendorName that was extracted in extracted data. I can then put whether it is exact match or fuzzy match. If I select fuzzy match there will be a match threshold. I can define up to 7 lookups. For instance, on top of looking up BPName, I might also want to lookup the CardName column in data map set, with the Card_Name extracted in the schema.
+
+Do note essentially what we are doing here is filtering the rows in data map set when we are doing lookup. If there is more than 1 row left after completing lookup, the system needs to use the best match first then the first row to identify the selected row. We will then populate the schema based on the map target. 
+
+Do note that multiple cells in a selected row can be defined to populate a schema if I define it in my map target. 
+
+Do note that map target has 2 modes, map mode and calculation mode. Calculation mode is useful if we change things like UoM. For example, schema says UoM is in dozen, but we want it in units. And if we changed it to units, we have to multiply quantity by 12.
+
+So, here the map target does include an initial mapping to map dozen to units. In this case I am mapping the extractor schema UoM with Conversion List UoM_final column for example. I look up UoM_initial with the UoM in the document. It finds a row where the value is dozens, and it will take the UoM_final which is in units and map it to the schema so we update dozens to units. Then in the Conversion column, where the value is 12, I want to define map target to take the quantity in schema and * by Conversion column. This will then take whatever quantitiy in schema and multiply by 12. So in this rule, it updates the UoM and quantity to be consistent.
+
+
+I can have another case when I want to update currency. I want to populate the local amount section of schema by looking up the currency in data map set with currency in schema, identifying the conversion rate column, taking conversion rate and multiply by total in schema to populate the local currency part of schema. 
+
+You can see here how the rule does not just support mapping but also some calculation. Here are the example of calculation
+
+1. Conversion * quantity 
+
+2. total * foreign_exchange
+
+Once a rule has been setup, the data map rule can be used as node in workflow. When the data mapper rule node is added to workflow, I can click on it to open menu and define which rule the node should use. Once that is done, it knows that it is expected documents that has passed through a certain extractor since each rule is dependent on schema of extractor. When a document and its extracted metadata comes in, the rule will run. It runs the lookup and enrich schema according to the map target, and outputs the document with the enriched schema.
+
+Do note that when we are in the data mapper rule update screen, similarly like the extractor node, I want to see a nodes using this data mapper rule. I can click on it to navigate to workflow where the node is in focus.

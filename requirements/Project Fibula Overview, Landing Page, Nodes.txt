@@ -1,0 +1,92 @@
+# Project Fibula
+
+Project Fibula is a workflow-first ETL platform that primarily ingests documents, and exports data. The core of Fibula are nodes that is provided to the user to build out document processing workflows. These nodes receive input, run a function, and produce output. Some nodes also include services that provide temporary states where a document can exist (document folders, and reconciliation).
+
+Here is high-level requirements of Project Fibula.
+
+## 1. A marketing page
+
+## 2. A self-serve page where users can signup and login
+- Only signin with Google
+
+## 3. A landing page
+
+### a. With tabs
+
+i. **Workflow tab (default)**  
+- Showing you a list of workflows you have created  
+
+ii. **Document folders tab**
+- Showing you a list of document folder instances you have created, the documents held in each folder, which workflow each document came from, and which workflows and nodes are using each folder instance
+
+iii. **Reconciliation tab**
+- Showing you a list of matchings sets that you have created (a service showing you all the matched documents, and the compared results)
+
+iv. **Document splitting tab**
+- Showing you list of splitting prompts you created for document splitting
+
+v. **Document categorisation prompt**
+- Showing you a list of categorisation prompts you created for categorisation
+
+vi. **Extractors**
+- Showing you list of extractors created (a service showing you JSON schema, a list of documents that are currently in it, and feedbacks)
+
+vii. **Data mapper**
+- Showing you two sub-views: Data Map Sets (lookup tables such as vendor master data) and Data Map Rules (rules that define how to enrich extracted schema using data map sets)  
+
+### b. User settings
+- First name  
+- Last name  
+- Profile icon  
+- Logout button  
+- Light and dark mode  
+
+---
+
+## 4. Nodes
+
+### a. Manual document upload node
+i. Inputs a document type of pdf, jpeg, jpg, tiff, png  
+ii. Outputs the document  
+
+### b. Gmail and GDrive ingestion node
+- Out of scope  
+
+### c. Document splitting node
+i. Inputs a document  
+ii. Calls LLM with splitting prompt to mark pages to split and system splits it  
+iii. Outputs document(s)  
+
+### d. Document categorisation prompt
+i. Input a document  
+ii. Calls LLM to look at document and based on document categorisation prompt applied, it applies a metadata categorisation tag to the document  
+iii. Outputs a document with categorisation metadata  
+
+### e. IF node
+i. Inputs a document with its metadata, for example categorisation, extracted data  
+ii. Runs a function that user sets with json expression  
+iii. Outputs a true or false signal  
+
+### f. SWITCH node
+i. Inputs a document with its metadata  
+ii. Runs a function that user sets with json expression  
+iii. Outputs the first case that is true  
+
+### g. Extraction node
+i. Inputs a document  
+ii. Runs the extractor based on JSON schema, and feedback  
+iii. Outputs a document with extracted data in metadata  
+
+### h. Data mapper node
+i. Inputs a document and its metadata  
+ii. Runs the data mapper rule  
+iii. Outputs a document with enriched extracted metadata  
+
+### i. Reconciliation node
+i. Inputs document  
+ii. Run reconciliation service  
+iii. Outputs documents that are reconciled  
+
+### j. Set value
+i. Inputs a document and its metadata  
+ii. Outputs an enriched metadata  

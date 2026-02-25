@@ -1,0 +1,37 @@
+There are 5 classes of nodes, and each class has a different usage. This document covers the HTTP node.
+
+Trigger node
+Example: manual upload
+
+Pure execution node
+Example: transform JSON, evaluate expression
+
+Config node
+Example: define system prompt once and reuse
+
+Service node
+Example: reconciliation dashboard showing matched documents, extractor node, data mapper
+
+Webhook node (mainly used for sending events when something happens)
+
+HTTP node (mainly used for exporting data)
+
+
+The HTTP node is an output-class node that makes an outbound HTTP request to an external system. Its primary use case is exporting extracted or enriched document data to external services such as ERPs, APIs, or notification systems.
+
+The HTTP node takes a document and its metadata as input. The user configures the node with a target URL, HTTP method, optional headers, and a body. The body can be built using a mix of hardcoded values and values mapped from the document metadata using JSON expressions (e.g. {{ $document.invoiceNumber }}).
+
+Node configuration:
+- URL: the target endpoint (required)
+- Method: GET, POST, PUT, PATCH, DELETE (required)
+- Headers: key-value pairs, values can use JSON expressions from metadata
+- Body: JSON body, values can use JSON expressions from metadata
+
+Node menu for HTTP node:
+- Shows the input (document and metadata)
+- Shows the configuration fields (URL, method, headers, body)
+- Shows the output, which is the document and its metadata passed through, plus a new metadata field containing the HTTP response (status code and response body)
+
+If the HTTP request fails (non-2xx response or network error), the node marks the execution as failed and the document does not proceed to the next node. The failure is logged in the execution log with the error details.
+
+The output of the HTTP node is the original document and its metadata, unchanged, plus the response appended to metadata. This allows downstream nodes to act on the response if needed.
