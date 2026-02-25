@@ -5,8 +5,14 @@ const nodeModel = require('../models/node.model');
 const edgeModel = require('../models/edge.model');
 const splittingInstructionModel = require('../models/splittingInstruction.model');
 const categorisationPromptModel = require('../models/categorisationPrompt.model');
+const documentFolderModel = require('../models/documentFolder.model');
+const extractorModel = require('../models/extractor.model');
+const dataMapperModel = require('../models/dataMapper.model');
 const splittingService = require('./splitting.service');
 const categorisationService = require('./categorisation.service');
+const extractorService = require('./extractor.service');
+const dataMapperService = require('./dataMapper.service');
+const reconciliationService = require('./reconciliation.service');
 const { evaluateConditions, applyAssignments } = require('../utils/expression');
 
 /**
@@ -33,16 +39,16 @@ function findEntryNodes(nodes, edges) {
 /**
  * Process a single node.
  * Returns one of:
- *   { type: 'continue', outputMetadata, outputPort }
+ *   { type: 'continue', outputMetadata, outputPort, setDocExecIds? }
  *   { type: 'fanout', subDocuments: [{file_url, file_name, file_type, label}] }
+ *   { type: 'hold' }
  */
-async function processNode(node, metadata, workflowRunId) {
+async function processNode(node, metadata, workflowRunId, docExecutionId, workflowId) {
   const config = node.config || {};
 
   switch (node.node_type) {
     case 'SPLITTING': {
       if (!config.splitting_instruction_id) {
-        // No instruction configured — pass through
         return { type: 'continue', outputMetadata: { ...metadata }, outputPort: 'default' };
       }
       const instruction = await splittingInstructionModel.findById(config.splitting_instruction_id);
@@ -105,7 +111,6 @@ async function processNode(node, metadata, workflowRunId) {
           };
         }
       }
-      // No case matched — fallback
       return { type: 'continue', outputMetadata: { ...metadata }, outputPort: 'fallback' };
     }
 
@@ -115,25 +120,95 @@ async function processNode(node, metadata, workflowRunId) {
       return { type: 'continue', outputMetadata: enrichedMetadata, outputPort: 'default' };
     }
 
+    case 'DOCUMENT_FOLDER': {
+      if (!config.folder_instance_id) {
+        return { type: 'continue', outputMetadata: { ...metadata }, outputPort: 'default' };
+      }
+      await documentFolderModel.createHeld({
+        folderInstanceId: config.folder_instance_id,
+        documentExecutionId: docExecutionId,
+        workflowId,
+        nodeId: node.id,
+      });
+      return { type: 'hold' };
+    }
+
+    case 'EXTRACTOR': {
+      if (!config.extractor_id) {
+        return { type: 'continue', outputMetadata: { ...metadata }, outputPort: 'default' };
+      }
+      const extractor = await extractorModel.findById(config.extractor_id);
+      if (!extractor) throw new Error(`Extractor ${config.extractor_id} not found`);
+
+      const document = await documentModel.findById(metadata.document_id);
+      if (!document) throw new Error(`Document ${metadata.document_id} not found`);
+
+      const extracted = await extractorService.extractData(document, extractor);
+      const enrichedMetadata = {
+        ...metadata,
+        header: extracted.header,
+        tables: extracted.tables,
+        _extractor_id: extractor.id,
+        _extractor_name: extractor.name,
+      };
+
+      const shouldHold = extractor.hold_all || extractorService.hasMissingMandatory(extractor, extracted);
+      if (shouldHold) {
+        await extractorModel.createHeld({ extractorId: extractor.id, documentExecutionId: docExecutionId });
+        await documentExecutionModel.updateStatus(docExecutionId, { metadata: enrichedMetadata });
+        return { type: 'hold' };
+      }
+
+      return { type: 'continue', outputMetadata: enrichedMetadata, outputPort: 'default' };
+    }
+
+    case 'DATA_MAPPER': {
+      if (!config.rule_id) {
+        return { type: 'continue', outputMetadata: { ...metadata }, outputPort: 'default' };
+      }
+      const rule = await dataMapperModel.findRuleById(config.rule_id);
+      if (!rule) throw new Error(`Data map rule ${config.rule_id} not found`);
+      const enrichedMetadata = await dataMapperService.applyRule(rule, metadata);
+      return { type: 'continue', outputMetadata: enrichedMetadata, outputPort: 'default' };
+    }
+
+    case 'RECONCILIATION': {
+      if (!config.reconciliation_rule_id) {
+        return { type: 'continue', outputMetadata: { ...metadata }, outputPort: 'default' };
+      }
+      const result = await reconciliationService.processDocument({
+        ruleId: config.reconciliation_rule_id,
+        docExecutionId,
+        metadata,
+        workflowId,
+        nodeId: node.id,
+      });
+      return result;
+    }
+
     default:
-      // Pass-through for remaining node types (EXTRACTOR, DATA_MAPPER, etc. — later phases)
       return { type: 'continue', outputMetadata: { ...metadata }, outputPort: 'default' };
   }
 }
 
 /**
  * Run a single document execution through the workflow graph.
- * pendingExecQueue is a mutable array — fan-outs push new docExecs into it.
+ * startQueue: optional array of { nodeId, metadata } to override entry nodes.
+ * pendingExecQueue is mutable — fan-outs and reconciliation push new items into it.
  */
-async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pendingExecQueue) {
+async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pendingExecQueue, startQueue = null) {
   const nodeMap = Object.fromEntries(nodes.map((n) => [n.id, n]));
-  const entryNodes = findEntryNodes(nodes, edges);
 
-  // BFS queue: { nodeId, metadata }
-  const queue = entryNodes.map((n) => ({
-    nodeId: n.id,
-    metadata: JSON.parse(docExecution.metadata || '{}'),
-  }));
+  let workflowId = null;
+  try {
+    const run = await workflowRunModel.findById(workflowRunId);
+    workflowId = run ? run.workflow_id : null;
+  } catch (_) { /* pass */ }
+
+  const initialMetadata = JSON.parse(docExecution.metadata || '{}');
+  const queue = startQueue
+    ? startQueue.map((item) => ({ ...item }))
+    : findEntryNodes(nodes, edges).map((n) => ({ nodeId: n.id, metadata: initialMetadata }));
 
   while (queue.length > 0) {
     const { nodeId, metadata } = queue.shift();
@@ -157,11 +232,17 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
     let logError = null;
 
     try {
-      result = await processNode(node, metadata, workflowRunId);
+      result = await processNode(node, metadata, workflowRunId, docExecution.id, workflowId);
     } catch (err) {
       logStatus = 'failed';
       logError = err.message;
       result = { type: 'continue', outputMetadata: metadata, outputPort: 'default' };
+    }
+
+    if (result.type === 'hold') {
+      await documentExecutionModel.updateLog(log.id, { status: 'held', outputMetadata: metadata });
+      await documentExecutionModel.updateStatus(docExecution.id, { status: 'held', currentNodeId: nodeId });
+      return;
     }
 
     await documentExecutionModel.updateLog(log.id, {
@@ -176,16 +257,14 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
     }
 
     if (result.type === 'fanout') {
-      // Mark this execution as completed at this node
       await documentExecutionModel.updateStatus(docExecution.id, {
         status: 'completed',
         currentNodeId: null,
       });
 
-      // Create new document records + executions for each sub-document
       for (const subDoc of result.subDocuments) {
         const newDoc = await documentModel.create({
-          userId: null, // sub-documents created by system
+          userId: null,
           fileName: subDoc.file_name,
           fileUrl: subDoc.file_url,
           fileType: subDoc.file_type,
@@ -193,28 +272,38 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
 
         const newExec = await documentExecutionModel.createMany(workflowRunId, [newDoc.id]);
 
-        // Enqueue sub-doc executions with the outgoing edges from the splitting node
         const nextNodes = (graph[nodeId] || []).map((e) => ({
           nodeId: e.targetNodeId,
           metadata: { document_id: newDoc.id, label: subDoc.label },
         }));
 
-        // Push as a new document execution to be processed after current one
         pendingExecQueue.push({
           docExecution: newExec[0],
           startQueue: nextNodes,
         });
       }
-      return; // current doc execution done
+      return;
     }
 
     // Normal continue — follow output port edges
-    const { outputMetadata, outputPort } = result;
+    const { outputMetadata, outputPort, setDocExecIds } = result;
     const nextEdges = (graph[nodeId] || []).filter(
       (e) => e.sourcePort === outputPort || outputPort === 'default'
     );
     for (const edge of nextEdges) {
       queue.push({ nodeId: edge.targetNodeId, metadata: outputMetadata });
+    }
+
+    // For reconciliation: also advance other docs in the matching set
+    if (setDocExecIds && setDocExecIds.length > 0) {
+      for (const otherId of setDocExecIds) {
+        const otherExec = await documentExecutionModel.findById(otherId);
+        if (otherExec && otherExec.status === 'held') {
+          const otherMeta = JSON.parse(otherExec.metadata || '{}');
+          const startQ = nextEdges.map((e) => ({ nodeId: e.targetNodeId, metadata: otherMeta }));
+          pendingExecQueue.push({ docExecution: otherExec, startQueue: startQ });
+        }
+      }
     }
   }
 
@@ -239,17 +328,52 @@ async function runWorkflow(workflowRunId) {
 
   const graph = buildGraph(edges);
 
-  // pendingExecQueue can grow when splitting fan-outs happen
   const pendingExecQueue = initialExecs.map((e) => ({ docExecution: e, startQueue: null }));
 
   while (pendingExecQueue.length > 0) {
     const { docExecution, startQueue } = pendingExecQueue.shift();
-    await runDocument(docExecution, nodes, edges, graph, workflowRunId, pendingExecQueue);
+    await runDocument(docExecution, nodes, edges, graph, workflowRunId, pendingExecQueue, startQueue);
   }
 
   const allExecs = await documentExecutionModel.findByRunId(workflowRunId);
   const anyFailed = allExecs.some((e) => e.status === 'failed');
-  await workflowRunModel.updateStatus(workflowRunId, anyFailed ? 'failed' : 'completed', new Date());
+  const anyRunning = allExecs.some((e) => ['pending', 'processing'].includes(e.status));
+  const status = anyFailed ? 'failed' : anyRunning ? 'running' : 'completed';
+  await workflowRunModel.updateStatus(workflowRunId, status, new Date());
 }
 
-module.exports = { runWorkflow };
+/**
+ * Resume a single document execution from a specific node (after hold is released).
+ */
+async function resumeDocumentExecution(docExecutionId, fromNodeId, workflowRunId) {
+  const [docExec, run] = await Promise.all([
+    documentExecutionModel.findById(docExecutionId),
+    workflowRunModel.findById(workflowRunId),
+  ]);
+  if (!docExec || !run) return;
+
+  const [nodes, edges] = await Promise.all([
+    nodeModel.findByWorkflowId(run.workflow_id),
+    edgeModel.findByWorkflowId(run.workflow_id),
+  ]);
+
+  const graph = buildGraph(edges);
+  const meta = JSON.parse(docExec.metadata || '{}');
+
+  const startQueue = (graph[fromNodeId] || []).map((e) => ({
+    nodeId: e.targetNodeId,
+    metadata: meta,
+  }));
+
+  await documentExecutionModel.updateStatus(docExecutionId, { status: 'processing' });
+
+  const pendingExecQueue = [];
+  await runDocument(docExec, nodes, edges, graph, workflowRunId, pendingExecQueue, startQueue);
+
+  while (pendingExecQueue.length > 0) {
+    const { docExecution, startQueue: subStartQueue } = pendingExecQueue.shift();
+    await runDocument(docExecution, nodes, edges, graph, workflowRunId, pendingExecQueue, subStartQueue);
+  }
+}
+
+module.exports = { runWorkflow, resumeDocumentExecution };

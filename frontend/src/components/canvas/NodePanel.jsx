@@ -2,6 +2,10 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import splittingService from '../../services/splittingService';
 import categorisationService from '../../services/categorisationService';
+import documentFolderService from '../../services/documentFolderService';
+import extractorService from '../../services/extractorService';
+import dataMapperService from '../../services/dataMapperService';
+import reconciliationService from '../../services/reconciliationService';
 import * as workflowService from '../../services/workflowService';
 import useCanvasStore from '../../stores/useCanvasStore';
 
@@ -300,12 +304,20 @@ function NodePanel({ node, onClose }) {
 
   const [splittingOptions, setSplittingOptions] = useState([]);
   const [categorisationOptions, setCategorisationOptions] = useState([]);
+  const [folderOptions, setFolderOptions] = useState([]);
+  const [extractorOptions, setExtractorOptions] = useState([]);
+  const [dataMapRuleOptions, setDataMapRuleOptions] = useState([]);
+  const [reconciliationOptions, setReconciliationOptions] = useState([]);
   const [config, setConfig] = useState(node.data.config || {});
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (nodeType === 'SPLITTING') splittingService.getAll().then(({ data }) => setSplittingOptions(data));
     if (nodeType === 'CATEGORISATION') categorisationService.getAll().then(({ data }) => setCategorisationOptions(data));
+    if (nodeType === 'DOCUMENT_FOLDER') documentFolderService.list().then((data) => setFolderOptions(data));
+    if (nodeType === 'EXTRACTOR') extractorService.list().then((data) => setExtractorOptions(data));
+    if (nodeType === 'DATA_MAPPER') dataMapperService.listRules().then((data) => setDataMapRuleOptions(data));
+    if (nodeType === 'RECONCILIATION') reconciliationService.list().then((data) => setReconciliationOptions(data));
   }, [nodeType]);
 
   async function handleSave() {
@@ -327,7 +339,8 @@ function NodePanel({ node, onClose }) {
     }
   }
 
-  const hasConfig = ['SPLITTING', 'CATEGORISATION', 'IF', 'SWITCH', 'SET_VALUE'].includes(nodeType);
+  const hasConfig = ['SPLITTING', 'CATEGORISATION', 'IF', 'SWITCH', 'SET_VALUE',
+    'DOCUMENT_FOLDER', 'EXTRACTOR', 'DATA_MAPPER', 'RECONCILIATION'].includes(nodeType);
 
   return (
     <div className="w-80 bg-white dark:bg-gray-800 border-l border-gray-200 dark:border-gray-700 flex flex-col h-full">
@@ -417,6 +430,169 @@ function NodePanel({ node, onClose }) {
               >
                 Create a categorisation prompt →
               </button>
+            )}
+          </div>
+        )}
+
+        {nodeType === 'DOCUMENT_FOLDER' && (
+          <div>
+            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+              Document Folder
+            </label>
+            <select
+              value={config.folder_instance_id || ''}
+              onChange={(e) => setConfig({ ...config, folder_instance_id: e.target.value || null })}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">— Select a folder —</option>
+              {folderOptions.map((f) => (
+                <option key={f.id} value={f.id}>{f.name}</option>
+              ))}
+            </select>
+            {folderOptions.length === 0 && (
+              <button
+                onClick={() => navigate('/app/document-folders/new')}
+                className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+              >
+                Create a document folder →
+              </button>
+            )}
+            <p className="mt-2 text-xs text-gray-400">
+              Documents will be held in this folder until manually sent out.
+            </p>
+          </div>
+        )}
+
+        {nodeType === 'EXTRACTOR' && (
+          <div>
+            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+              Extractor
+            </label>
+            <select
+              value={config.extractor_id || ''}
+              onChange={(e) => setConfig({ ...config, extractor_id: e.target.value || null })}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">— Select an extractor —</option>
+              {extractorOptions.map((e) => (
+                <option key={e.id} value={e.id}>{e.name}</option>
+              ))}
+            </select>
+            {extractorOptions.length === 0 && (
+              <button
+                onClick={() => navigate('/app/extractors/new')}
+                className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+              >
+                Create an extractor →
+              </button>
+            )}
+            {config.extractor_id && (
+              <button
+                onClick={() => navigate(`/app/extractors/${config.extractor_id}`)}
+                className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 hover:underline block"
+              >
+                Edit extractor schema →
+              </button>
+            )}
+          </div>
+        )}
+
+        {nodeType === 'DATA_MAPPER' && (
+          <div>
+            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+              Data Map Rule
+            </label>
+            <select
+              value={config.data_map_rule_id || ''}
+              onChange={(e) => setConfig({ ...config, data_map_rule_id: e.target.value || null })}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">— Select a rule —</option>
+              {dataMapRuleOptions.map((r) => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
+            </select>
+            {dataMapRuleOptions.length === 0 && (
+              <button
+                onClick={() => navigate('/app/data-map-rules/new')}
+                className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+              >
+                Create a data map rule →
+              </button>
+            )}
+            {config.data_map_rule_id && (
+              <button
+                onClick={() => navigate(`/app/data-map-rules/${config.data_map_rule_id}`)}
+                className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 hover:underline block"
+              >
+                Edit rule →
+              </button>
+            )}
+          </div>
+        )}
+
+        {nodeType === 'RECONCILIATION' && (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                Reconciliation Rule
+              </label>
+              <select
+                value={config.reconciliation_rule_id || ''}
+                onChange={async (e) => {
+                  const ruleId = e.target.value || null;
+                  if (!ruleId) {
+                    setConfig({ ...config, reconciliation_rule_id: null, reconciliation_inputs: [] });
+                    return;
+                  }
+                  try {
+                    const { rule } = await reconciliationService.getOne(ruleId);
+                    const inputs = [];
+                    if (rule.anchor_extractor_id) {
+                      const anchor = reconciliationOptions.find(
+                        (r) => r.id === ruleId
+                      );
+                      inputs.push({ id: 'anchor', name: 'Anchor' });
+                    }
+                    (rule.target_extractors || []).forEach((t, i) => {
+                      inputs.push({ id: `target_${i}`, name: t.extractor_name || `Target ${i + 1}` });
+                    });
+                    setConfig({ ...config, reconciliation_rule_id: ruleId, reconciliation_inputs: inputs });
+                  } catch {
+                    setConfig({ ...config, reconciliation_rule_id: ruleId, reconciliation_inputs: [] });
+                  }
+                }}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">— Select a rule —</option>
+                {reconciliationOptions.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+              {reconciliationOptions.length === 0 && (
+                <button
+                  onClick={() => navigate('/app/reconciliation-rules/new')}
+                  className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+                >
+                  Create a reconciliation rule →
+                </button>
+              )}
+              {config.reconciliation_rule_id && (
+                <button
+                  onClick={() => navigate(`/app/reconciliation-rules/${config.reconciliation_rule_id}`)}
+                  className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 hover:underline block"
+                >
+                  Edit rule →
+                </button>
+              )}
+            </div>
+            {config.reconciliation_inputs?.length > 0 && (
+              <p className="text-xs text-gray-400">
+                Input ports:{' '}
+                {config.reconciliation_inputs.map((inp) => (
+                  <span key={inp.id} className="font-mono text-indigo-600 dark:text-indigo-400 mr-1">{inp.name}</span>
+                ))}
+              </p>
             )}
           </div>
         )}
