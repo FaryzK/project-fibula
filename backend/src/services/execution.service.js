@@ -7,6 +7,7 @@ const splittingInstructionModel = require('../models/splittingInstruction.model'
 const categorisationPromptModel = require('../models/categorisationPrompt.model');
 const splittingService = require('./splitting.service');
 const categorisationService = require('./categorisation.service');
+const { evaluateConditions, applyAssignments } = require('../utils/expression');
 
 /**
  * Build an adjacency map: { sourceNodeId: [{ targetNodeId, sourcePort, targetPort }] }
@@ -76,8 +77,46 @@ async function processNode(node, metadata, workflowRunId) {
       };
     }
 
+    case 'IF': {
+      const conditions = config.conditions || [];
+      const logic = config.logic || 'AND';
+      const result = evaluateConditions(conditions, logic, metadata);
+      return {
+        type: 'continue',
+        outputMetadata: { ...metadata },
+        outputPort: result ? 'true' : 'false',
+      };
+    }
+
+    case 'SWITCH': {
+      const cases = config.cases || [];
+      for (const switchCase of cases) {
+        const condition = {
+          field: switchCase.field,
+          operator: switchCase.operator,
+          value: switchCase.value,
+          type: switchCase.type,
+        };
+        if (evaluateConditions([condition], 'AND', metadata)) {
+          return {
+            type: 'continue',
+            outputMetadata: { ...metadata },
+            outputPort: switchCase.id,
+          };
+        }
+      }
+      // No case matched — fallback
+      return { type: 'continue', outputMetadata: { ...metadata }, outputPort: 'fallback' };
+    }
+
+    case 'SET_VALUE': {
+      const assignments = config.assignments || [];
+      const enrichedMetadata = applyAssignments(assignments, metadata);
+      return { type: 'continue', outputMetadata: enrichedMetadata, outputPort: 'default' };
+    }
+
     default:
-      // Pass-through for all other node types (IF, SWITCH, etc. — implemented in later phases)
+      // Pass-through for remaining node types (EXTRACTOR, DATA_MAPPER, etc. — later phases)
       return { type: 'continue', outputMetadata: { ...metadata }, outputPort: 'default' };
   }
 }
