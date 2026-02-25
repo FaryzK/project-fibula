@@ -1,6 +1,9 @@
-// React Flow nodeTypes map — populated phase by phase as custom nodes are built
-// Each key must match the node_type value stored in the DB
+import FibulaNode from '../components/nodes/FibulaNode';
 
-const nodeTypes = {};
+// React Flow nodeTypes map — all node types share the same base component.
+// Node-type-specific menus are wired in later phases.
+const nodeTypes = {
+  fibulaNode: FibulaNode,
+};
 
 export default nodeTypes;

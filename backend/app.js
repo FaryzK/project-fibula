@@ -5,6 +5,7 @@ const morgan = require('morgan');
 
 const healthRoutes = require('./src/routes/health.routes');
 const authRoutes = require('./src/routes/auth.routes');
+const workflowRoutes = require('./src/routes/workflow.routes');
 const errorMiddleware = require('./src/middleware/error.middleware');
 
 const env = require('./src/config/env');
@@ -22,6 +23,7 @@ if (env.nodeEnv !== 'test') {
 
 app.use('/api/health', healthRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/workflows', workflowRoutes);
 
 app.use(errorMiddleware);
 
