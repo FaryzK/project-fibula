@@ -2,15 +2,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/auth/Login';
 import AuthCallback from './pages/auth/AuthCallback';
 import ProtectedRoute from './components/ProtectedRoute';
-
-// Placeholder pages — will be implemented phase by phase
-function Landing() {
-  return <div className="p-8 text-gray-800 dark:text-white">Landing — coming soon</div>;
-}
-
-function WorkflowCanvas() {
-  return <div className="p-8 text-gray-800 dark:text-white">Canvas — coming soon</div>;
-}
+import Landing from './pages/landing/Landing';
+import WorkflowCanvas from './pages/canvas/WorkflowCanvas';
 
 function App() {
   return (
