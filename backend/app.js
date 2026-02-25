@@ -10,6 +10,10 @@ const documentRoutes = require('./src/routes/document.routes');
 const runRoutes = require('./src/routes/run.routes');
 const splittingRoutes = require('./src/routes/splitting.routes');
 const categorisationRoutes = require('./src/routes/categorisation.routes');
+const documentFolderRoutes = require('./src/routes/documentFolder.routes');
+const extractorRoutes = require('./src/routes/extractor.routes');
+const { setsRouter: dataMapSetsRoutes, rulesRouter: dataMapRulesRoutes } = require('./src/routes/dataMapper.routes');
+const reconciliationRoutes = require('./src/routes/reconciliation.routes');
 const errorMiddleware = require('./src/middleware/error.middleware');
 
 const env = require('./src/config/env');
@@ -32,6 +36,11 @@ app.use('/api/documents', documentRoutes);
 app.use('/api/runs', runRoutes);
 app.use('/api/splitting-instructions', splittingRoutes);
 app.use('/api/categorisation-prompts', categorisationRoutes);
+app.use('/api/document-folders', documentFolderRoutes);
+app.use('/api/extractors', extractorRoutes);
+app.use('/api/data-map-sets', dataMapSetsRoutes);
+app.use('/api/data-map-rules', dataMapRulesRoutes);
+app.use('/api/reconciliation-rules', reconciliationRoutes);
 
 app.use(errorMiddleware);
 

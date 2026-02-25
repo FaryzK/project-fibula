@@ -24,6 +24,16 @@ const NODE_CATEGORIES = {
   HTTP:            'Output',
 };
 
+/** Build the list of input port handles for a node */
+function getInputHandles(nodeType, config) {
+  if (nodeType === 'RECONCILIATION') {
+    const inputs = config?.reconciliation_inputs || [];
+    if (inputs.length > 0) return inputs.map((inp) => ({ id: inp.id, label: inp.name }));
+    return [{ id: 'default', label: '' }];
+  }
+  return [{ id: 'default', label: '' }];
+}
+
 /** Build the list of output port handles for a node */
 function getOutputHandles(nodeType, config) {
   switch (nodeType) {
@@ -75,7 +85,9 @@ function FibulaNode({ id, data, selected }) {
   const accent = CATEGORY_COLORS[category];
   const config = data.config || {};
   const outputHandles = getOutputHandles(data.nodeType, config);
+  const inputHandles = getInputHandles(data.nodeType, config);
   const hasMultipleOutputs = outputHandles.length > 1;
+  const hasMultipleInputs = inputHandles.length > 1;
 
   const nodeStatuses = useCanvasStore((s) => s.nodeStatuses);
   const runStatus = deriveNodeRunStatus(nodeStatuses[id]);
@@ -108,6 +120,18 @@ function FibulaNode({ id, data, selected }) {
           {data.label}
         </p>
 
+        {/* Input port labels for multi-input nodes (e.g. RECONCILIATION) */}
+        {hasMultipleInputs && (
+          <div className="mt-2 border-t border-gray-100 dark:border-gray-700 pt-1.5 space-y-1">
+            {inputHandles.map((h) => (
+              <div key={h.id} className="flex items-center gap-1.5">
+                <div className="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500 shrink-0" />
+                <span className="text-xs text-gray-400 dark:text-gray-500">{h.label}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Output port labels for multi-handle nodes */}
         {hasMultipleOutputs && (
           <div className="mt-2 border-t border-gray-100 dark:border-gray-700 pt-1.5 space-y-1">
@@ -121,12 +145,17 @@ function FibulaNode({ id, data, selected }) {
         )}
       </div>
 
-      {/* Input handle (left) */}
-      <Handle
-        type="target"
-        position={Position.Left}
-        className="!w-3 !h-3 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-800"
-      />
+      {/* Input handles (left) — labeled if multiple (e.g. RECONCILIATION) */}
+      {inputHandles.map((h, i) => (
+        <Handle
+          key={h.id}
+          id={h.id}
+          type="target"
+          position={Position.Left}
+          style={hasMultipleInputs ? { top: `${((i + 1) / (inputHandles.length + 1)) * 100}%` } : undefined}
+          className="!w-3 !h-3 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-800"
+        />
+      ))}
 
       {/* Output handles (right) — one per port, evenly distributed vertically */}
       {outputHandles.map((h, i) => (

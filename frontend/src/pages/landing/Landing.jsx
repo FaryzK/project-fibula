@@ -3,6 +3,10 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import WorkflowsTab from './WorkflowsTab';
 import SplittingTab from './SplittingTab';
 import CategorisationTab from './CategorisationTab';
+import DocumentFoldersTab from './DocumentFoldersTab';
+import ExtractorsTab from './ExtractorsTab';
+import DataMapperTab from './DataMapperTab';
+import ReconciliationTab from './ReconciliationTab';
 import useAuthStore from '../../stores/useAuthStore';
 import supabase from '../../services/supabase';
 
@@ -80,9 +84,10 @@ function Landing() {
         {activeTab === 'workflows' && <WorkflowsTab />}
         {activeTab === 'splitting' && <SplittingTab />}
         {activeTab === 'categorisation' && <CategorisationTab />}
-        {!['workflows', 'splitting', 'categorisation'].includes(activeTab) && (
-          <div className="text-gray-400 dark:text-gray-500 text-sm">Coming soon</div>
-        )}
+        {activeTab === 'document-folders' && <DocumentFoldersTab />}
+        {activeTab === 'extractors' && <ExtractorsTab />}
+        {activeTab === 'data-mapper' && <DataMapperTab />}
+        {activeTab === 'reconciliation' && <ReconciliationTab />}
       </main>
     </div>
   );
