@@ -5,6 +5,7 @@ const dbUserMiddleware = require('../middleware/dbUser.middleware');
 const workflowController = require('../controllers/workflow.controller');
 const nodeController = require('../controllers/node.controller');
 const edgeController = require('../controllers/edge.controller');
+const runController = require('../controllers/run.controller');
 
 router.use(authMiddleware, dbUserMiddleware);
 
@@ -27,5 +28,9 @@ router.delete('/:workflowId/nodes/:nodeId', nodeController.remove);
 router.get('/:workflowId/edges', edgeController.list);
 router.post('/:workflowId/edges', edgeController.create);
 router.delete('/:workflowId/edges/:edgeId', edgeController.remove);
+
+// Runs (nested under workflow)
+router.post('/:id/runs', runController.createRun);
+router.get('/:id/runs', runController.listRuns);
 
 module.exports = router;
