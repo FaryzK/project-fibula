@@ -26,60 +26,44 @@ function buildCategoryList(labels) {
 }
 
 /**
- * Classify a document using OpenAI.
+ * Classify a document using OpenAI Responses API.
+ * Passes the file directly (PDF or image) — same approach as the extractor.
  * @param {Object} document - { file_url, file_type }
  * @param {Array<{label: string, description: string}>} labels
  * @returns {string} - The matched category label
  */
 async function classifyDocument(document, labels) {
   const { file_url, file_type } = document;
-  const isImage = file_type.startsWith('image/');
+  const isPdf = file_type === 'application/pdf';
   const categoryList = buildCategoryList(labels);
 
-  let userMessage;
+  const fileBuffer = await fetchBuffer(file_url);
+  const base64 = fileBuffer.toString('base64');
 
-  if (isImage) {
-    const fileBuffer = await fetchBuffer(file_url);
-    const base64 = fileBuffer.toString('base64');
-    userMessage = {
-      role: 'user',
-      content: [
-        {
-          type: 'image_url',
-          image_url: { url: `data:${file_type};base64,${base64}` },
-        },
-        {
-          type: 'text',
-          text: `Classify this document into one of the following categories:\n${categoryList}`,
-        },
-      ],
-    };
-  } else {
-    // PDF — extract text
-    let textContent = `[Document: ${document.file_name || 'unknown'}]`;
-    try {
-      const fileBuffer = await fetchBuffer(file_url);
-      const pdfParse = require('pdf-parse');
-      const data = await pdfParse(fileBuffer);
-      textContent = data.text.slice(0, 4000); // cap at 4k chars
-    } catch (_) {
-      // Keep default
-    }
+  const contentItem = isPdf
+    ? { type: 'input_file', filename: 'document.pdf', file_data: `data:application/pdf;base64,${base64}` }
+    : { type: 'input_image', image_url: `data:${file_type};base64,${base64}` };
 
-    userMessage = {
-      role: 'user',
-      content: `Classify this document into one of the following categories:\n${categoryList}\n\nDocument content:\n${textContent}`,
-    };
-  }
-
-  const response = await openai.chat.completions.create({
+  const response = await openai.responses.create({
     model: 'gpt-4o',
-    messages: [{ role: 'system', content: SYSTEM_PROMPT }, userMessage],
-    response_format: { type: 'json_object' },
-    max_tokens: 100,
+    instructions: SYSTEM_PROMPT,
+    input: [
+      {
+        role: 'user',
+        content: [
+          contentItem,
+          {
+            type: 'input_text',
+            text: `Classify this document into one of the following categories:\n${categoryList}`,
+          },
+        ],
+      },
+    ],
+    text: { format: { type: 'json_object' } },
+    max_output_tokens: 100,
   });
 
-  const parsed = JSON.parse(response.choices[0].message.content);
+  const parsed = JSON.parse(response.output_text);
   const validLabels = labels.map((l) => l.label);
 
   if (!validLabels.includes(parsed.category)) {

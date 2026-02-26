@@ -72,7 +72,11 @@ async function processNode(node, metadata, workflowRunId, docExecutionId, workfl
         throw new Error(`Document ${metadata.document_id} not found`);
       }
       const subDocuments = await splittingService.processDocument(document, instruction.instructions);
-      return { type: 'fanout', subDocuments };
+      return {
+        type: 'fanout',
+        subDocuments,
+        outputMetadata: { ...metadata, _split_count: subDocuments.length, _split_labels: subDocuments.map((s) => s.label) },
+      };
     }
 
     case 'CATEGORISATION': {

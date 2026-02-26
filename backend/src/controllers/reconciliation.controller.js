@@ -174,6 +174,36 @@ module.exports = {
     }
   },
 
+  // DELETE /reconciliation-rules/documents/:heldDocId
+  async deleteDoc(req, res, next) {
+    try {
+      const heldDoc = await db('reconciliation_held_documents')
+        .where({ document_execution_id: req.params.heldDocId, user_id: req.dbUser.id })
+        .first();
+      if (!heldDoc) return res.status(404).json({ error: 'Not found' });
+
+      // Delete any matching sets where this doc is the anchor
+      // (CASCADE removes set_docs + comparison_results within those sets)
+      await db('reconciliation_matching_sets')
+        .where({ anchor_document_execution_id: heldDoc.document_execution_id })
+        .delete();
+
+      // Remove this doc from any matching sets where it was a target
+      await db('reconciliation_matching_set_docs')
+        .where({ document_execution_id: heldDoc.document_execution_id })
+        .delete();
+
+      // Hard delete the held doc record
+      await db('reconciliation_held_documents')
+        .where({ id: heldDoc.id })
+        .delete();
+
+      return res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  },
+
   // GET /reconciliation-rules/:id/anchor-docs
   async listAnchorDocs(req, res, next) {
     try {

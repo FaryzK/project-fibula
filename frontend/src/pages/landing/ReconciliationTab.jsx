@@ -243,7 +243,8 @@ function ReconciliationTab() {
                     <th className="pb-2 pr-4 font-medium">Extractor</th>
                     <th className="pb-2 pr-4 font-medium">Status</th>
                     <th className="pb-2 pr-4 font-medium">Source</th>
-                    <th className="pb-2 font-medium">Matching Sets</th>
+                    <th className="pb-2 pr-4 font-medium">Matching Sets</th>
+                    <th className="pb-2 font-medium"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
@@ -264,8 +265,22 @@ function ReconciliationTab() {
                           <div className="text-gray-400 dark:text-gray-500">{doc.slot_label}</div>
                         )}
                       </td>
-                      <td className="py-2">
+                      <td className="py-2 pr-4">
                         <MatchingSetsPill sets={doc.matching_sets} docExecId={doc.document_execution_id} />
+                      </td>
+                      <td className="py-2">
+                        <button
+                          onClick={() => {
+                            if (!window.confirm('Permanently delete this document from reconciliation? This will also remove it from all matching sets.')) return;
+                            reconciliationService.deleteDoc(doc.document_execution_id)
+                              .then(() => setHeldDocs((prev) => prev.filter((d) => d.id !== doc.id)))
+                              .catch(() => alert('Failed to delete document.'));
+                          }}
+                          className="text-gray-400 hover:text-red-500 transition text-sm px-1"
+                          title="Remove document"
+                        >
+                          ✕
+                        </button>
                       </td>
                     </tr>
                   ))}
