@@ -163,6 +163,7 @@ module.exports = {
         `${HELD}.held_at`,
         `${DOCUMENTS}.file_name`,
         `${DOCUMENTS}.file_url`,
+        `${DOC_EXECUTIONS}.document_id`,
         `${DOC_EXECUTIONS}.metadata`,
         `${DOC_EXECUTIONS}.workflow_run_id`
       )
@@ -198,11 +199,13 @@ module.exports = {
     const [row] = await db(FEEDBACK)
       .insert({
         extractor_id: extractorId,
-        document_id: documentId,
+        document_id: documentId || null,
         target_type: targetType,
         target_id: targetId,
         feedback_text: feedbackText,
-        image_embedding: imageEmbedding || null,
+        image_embedding: imageEmbedding
+          ? db.raw('?::vector', [JSON.stringify(imageEmbedding)])
+          : null,
       })
       .returning('*');
     return row;

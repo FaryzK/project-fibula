@@ -12,6 +12,13 @@ const extractorService = {
   listFeedback: (id) => api.get(`/extractors/${id}/feedback`).then((r) => r.data),
   createFeedback: (id, payload) =>
     api.post(`/extractors/${id}/feedback`, payload).then((r) => r.data),
+  testExtract: (extractorId, file) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post(`/extractors/${extractorId}/test-extract`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }).then((r) => r.data);
+  },
 };
 
 export default extractorService;
