@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import NODE_CATALOGUE from '../../utils/nodeCatalogue';
 
-function NodePalette({ onAddNode, onClose }) {
+function NodePalette({ onAddNode, onClose, connectingFrom }) {
   const [search, setSearch] = useState('');
 
   const filtered = NODE_CATALOGUE.filter((n) =>
@@ -28,6 +28,12 @@ function NodePalette({ onAddNode, onClose }) {
         </button>
       </div>
 
+      {connectingFrom && (
+        <div className="px-4 py-2 bg-indigo-50 dark:bg-indigo-900/30 border-b border-indigo-100 dark:border-indigo-800 text-xs text-indigo-700 dark:text-indigo-300">
+          Connecting from <span className="font-semibold">{connectingFrom}</span> — pick a node to attach
+        </div>
+      )}
+
       <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-700">
         <input
           autoFocus
@@ -45,13 +51,19 @@ function NodePalette({ onAddNode, onClose }) {
               {category}
             </p>
             {nodes.map((node) => (
-              <button
+              <div
                 key={node.nodeType}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = 'move';
+                  e.dataTransfer.setData('application/nodetype', node.nodeType);
+                  e.dataTransfer.setData('application/nodelabel', node.label);
+                }}
                 onClick={() => onAddNode(node.nodeType, node.label)}
-                className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-indigo-50 dark:hover:bg-gray-700 transition"
+                className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-indigo-50 dark:hover:bg-gray-700 transition cursor-grab active:cursor-grabbing select-none"
               >
                 {node.label}
-              </button>
+              </div>
             ))}
           </div>
         ))}

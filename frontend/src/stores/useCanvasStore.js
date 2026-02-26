@@ -20,7 +20,7 @@ function dbEdgeToRF(e) {
     sourceHandle: e.source_port,
     target: e.target_node_id,
     targetHandle: e.target_port,
-    type: 'smoothstep',
+    type: 'default',
   };
 }
 

@@ -486,15 +486,22 @@ function NodePanel({ node, onClose }) {
     if (nodeType === 'RECONCILIATION') reconciliationService.list().then((data) => setReconciliationOptions(data));
   }, [nodeType]);
 
-  async function handleSave() {
+  async function saveConfig(newConfig) {
     setSaving(true);
-    await workflowService.updateNode(workflowId, node.id, { config });
-    useCanvasStore.setState((s) => ({
-      nodes: s.nodes.map((n) =>
-        n.id === node.id ? { ...n, data: { ...n.data, config } } : n
-      ),
-    }));
-    setSaving(false);
+    try {
+      await workflowService.updateNode(workflowId, node.id, { config: newConfig });
+      useCanvasStore.setState((s) => ({
+        nodes: s.nodes.map((n) =>
+          n.id === node.id ? { ...n, data: { ...n.data, config: newConfig } } : n
+        ),
+      }));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSave() {
+    await saveConfig(config);
     onClose();
   }
 
@@ -508,6 +515,9 @@ function NodePanel({ node, onClose }) {
   const hasConfig = ['SPLITTING', 'CATEGORISATION', 'IF', 'SWITCH', 'SET_VALUE',
     'DOCUMENT_FOLDER', 'EXTRACTOR', 'DATA_MAPPER', 'RECONCILIATION',
     'HTTP', 'WEBHOOK'].includes(nodeType);
+
+  // These node types auto-save on dropdown change — no explicit Save button needed
+  const needsSaveButton = ['IF', 'SWITCH', 'SET_VALUE', 'HTTP', 'WEBHOOK'].includes(nodeType);
 
   return (
     <div className="w-80 bg-white dark:bg-gray-800 border-l border-gray-200 dark:border-gray-700 flex flex-col h-full">
@@ -542,7 +552,11 @@ function NodePanel({ node, onClose }) {
             </label>
             <select
               value={config.splitting_instruction_id || ''}
-              onChange={(e) => setConfig({ ...config, splitting_instruction_id: e.target.value || null })}
+              onChange={(e) => {
+                const newConfig = { ...config, splitting_instruction_id: e.target.value || null };
+                setConfig(newConfig);
+                saveConfig(newConfig);
+              }}
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
             >
               <option value="">— Select an instruction —</option>
@@ -570,11 +584,13 @@ function NodePanel({ node, onClose }) {
               value={config.categorisation_prompt_id || ''}
               onChange={(e) => {
                 const selected = categorisationOptions.find((c) => c.id === e.target.value);
-                setConfig({
+                const newConfig = {
                   ...config,
                   categorisation_prompt_id: e.target.value || null,
                   categorisation_labels: selected ? selected.labels.map((l) => l.label) : [],
-                });
+                };
+                setConfig(newConfig);
+                saveConfig(newConfig);
               }}
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
             >
@@ -608,7 +624,11 @@ function NodePanel({ node, onClose }) {
             </label>
             <select
               value={config.folder_instance_id || ''}
-              onChange={(e) => setConfig({ ...config, folder_instance_id: e.target.value || null })}
+              onChange={(e) => {
+                const newConfig = { ...config, folder_instance_id: e.target.value || null };
+                setConfig(newConfig);
+                saveConfig(newConfig);
+              }}
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
             >
               <option value="">— Select a folder —</option>
@@ -637,7 +657,11 @@ function NodePanel({ node, onClose }) {
             </label>
             <select
               value={config.extractor_id || ''}
-              onChange={(e) => setConfig({ ...config, extractor_id: e.target.value || null })}
+              onChange={(e) => {
+                const newConfig = { ...config, extractor_id: e.target.value || null };
+                setConfig(newConfig);
+                saveConfig(newConfig);
+              }}
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
             >
               <option value="">— Select an extractor —</option>
@@ -671,7 +695,11 @@ function NodePanel({ node, onClose }) {
             </label>
             <select
               value={config.data_map_rule_id || ''}
-              onChange={(e) => setConfig({ ...config, data_map_rule_id: e.target.value || null })}
+              onChange={(e) => {
+                const newConfig = { ...config, data_map_rule_id: e.target.value || null };
+                setConfig(newConfig);
+                saveConfig(newConfig);
+              }}
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
             >
               <option value="">— Select a rule —</option>
@@ -709,25 +737,25 @@ function NodePanel({ node, onClose }) {
                 onChange={async (e) => {
                   const ruleId = e.target.value || null;
                   if (!ruleId) {
-                    setConfig({ ...config, reconciliation_rule_id: null, reconciliation_inputs: [] });
+                    const newConfig = { ...config, reconciliation_rule_id: null, reconciliation_inputs: [] };
+                    setConfig(newConfig);
+                    saveConfig(newConfig);
                     return;
                   }
+                  let newConfig;
                   try {
                     const { rule } = await reconciliationService.getOne(ruleId);
                     const inputs = [];
-                    if (rule.anchor_extractor_id) {
-                      const anchor = reconciliationOptions.find(
-                        (r) => r.id === ruleId
-                      );
-                      inputs.push({ id: 'anchor', name: 'Anchor' });
-                    }
+                    if (rule.anchor_extractor_id) inputs.push({ id: 'anchor', name: 'Anchor' });
                     (rule.target_extractors || []).forEach((t, i) => {
                       inputs.push({ id: `target_${i}`, name: t.extractor_name || `Target ${i + 1}` });
                     });
-                    setConfig({ ...config, reconciliation_rule_id: ruleId, reconciliation_inputs: inputs });
+                    newConfig = { ...config, reconciliation_rule_id: ruleId, reconciliation_inputs: inputs };
                   } catch {
-                    setConfig({ ...config, reconciliation_rule_id: ruleId, reconciliation_inputs: [] });
+                    newConfig = { ...config, reconciliation_rule_id: ruleId, reconciliation_inputs: [] };
                   }
+                  setConfig(newConfig);
+                  saveConfig(newConfig);
                 }}
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
               >
@@ -787,7 +815,7 @@ function NodePanel({ node, onClose }) {
         >
           Delete node
         </button>
-        {hasConfig && (
+        {needsSaveButton && (
           <button
             onClick={handleSave}
             disabled={saving}
@@ -795,6 +823,9 @@ function NodePanel({ node, onClose }) {
           >
             {saving ? 'Saving…' : 'Save'}
           </button>
+        )}
+        {!needsSaveButton && saving && (
+          <span className="text-xs text-gray-400">Saving…</span>
         )}
       </div>
     </div>
