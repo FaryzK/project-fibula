@@ -13,6 +13,7 @@ import DataMapSetEdit from './pages/config/DataMapSetEdit';
 import DataMapRuleEdit from './pages/config/DataMapRuleEdit';
 import ReconciliationRuleEdit from './pages/config/ReconciliationRuleEdit';
 import MatchingSetDetail from './pages/config/MatchingSetDetail';
+import AnchorDocDetail from './pages/config/AnchorDocDetail';
 import supabase from './services/supabase';
 import useAuthStore from './stores/useAuthStore';
 
@@ -57,6 +58,10 @@ function App() {
         <Route
           path="/app/reconciliation-rules/:ruleId/matching-sets/:setId"
           element={protect(<MatchingSetDetail />)}
+        />
+        <Route
+          path="/app/reconciliation-rules/:ruleId/anchor/:anchorDocExecId"
+          element={protect(<AnchorDocDetail />)}
         />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>

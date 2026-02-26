@@ -12,6 +12,8 @@ const NODES = 'nodes';
 const WORKFLOWS = 'workflows';
 const DOC_EXECUTIONS = 'document_executions';
 const DOCUMENTS = 'documents';
+const HELD_DOCS = 'reconciliation_held_documents';
+const COMPARISON_RESULTS = 'reconciliation_comparison_results';
 
 module.exports = {
   async findByUserId(userId) {
@@ -28,7 +30,7 @@ module.exports = {
 
     const [targetExtractors, variations] = await Promise.all([
       db(TARGET_EXTRACTORS).where({ rule_id: id }),
-      db(VARIATIONS).where({ rule_id: id }).orderBy('variation_order', 'asc'),
+      db(VARIATIONS).where({ rule_id: id }).orderBy('created_at', 'asc'),
     ]);
 
     const variationIds = variations.map((v) => v.id);
@@ -51,9 +53,9 @@ module.exports = {
     return { ...rule, target_extractors: targetExtractors, variations: fullVariations };
   },
 
-  async create({ userId, name, anchorExtractorId, targetExtractors = [], variations = [] }) {
+  async create({ userId, name, anchorExtractorId, autoSendOut = false, targetExtractors = [], variations = [] }) {
     const [rule] = await db(RULES)
-      .insert({ user_id: userId, name, anchor_extractor_id: anchorExtractorId })
+      .insert({ user_id: userId, name, anchor_extractor_id: anchorExtractorId, auto_send_out: autoSendOut })
       .returning('*');
 
     if (targetExtractors.length > 0) {
@@ -64,7 +66,7 @@ module.exports = {
 
     for (const v of variations) {
       const [variation] = await db(VARIATIONS)
-        .insert({ rule_id: rule.id, variation_order: v.variation_order || 1 })
+        .insert({ rule_id: rule.id })
         .returning('*');
 
       if (v.doc_matching_links && v.doc_matching_links.length > 0) {
@@ -115,6 +117,7 @@ module.exports = {
     const allowed = {};
     if (fields.name !== undefined) allowed.name = fields.name;
     if (fields.anchor_extractor_id !== undefined) allowed.anchor_extractor_id = fields.anchor_extractor_id;
+    if (fields.auto_send_out !== undefined) allowed.auto_send_out = fields.auto_send_out;
 
     let rule;
     if (Object.keys(allowed).length > 0) {
@@ -145,7 +148,7 @@ module.exports = {
 
       for (const v of fields.variations) {
         const [variation] = await db(VARIATIONS)
-          .insert({ rule_id: id, variation_order: v.variation_order || 1 })
+          .insert({ rule_id: id })
           .returning('*');
 
         if (v.doc_matching_links && v.doc_matching_links.length > 0) {
@@ -267,9 +270,14 @@ module.exports = {
     return { ...set, docs };
   },
 
-  async createMatchingSet({ ruleId, anchorDocExecId }) {
+  async createMatchingSet({ ruleId, variationId, anchorDocExecId }) {
     const [row] = await db(MATCHING_SETS)
-      .insert({ rule_id: ruleId, anchor_document_execution_id: anchorDocExecId, status: 'pending' })
+      .insert({
+        rule_id: ruleId,
+        variation_id: variationId || null,
+        anchor_document_execution_id: anchorDocExecId,
+        status: 'pending',
+      })
       .returning('*');
     return row;
   },
@@ -306,13 +314,197 @@ module.exports = {
       const rows = await db(SET_DOCS)
         .join(DOC_EXECUTIONS, `${SET_DOCS}.document_execution_id`, `${DOC_EXECUTIONS}.id`)
         .where(`${SET_DOCS}.matching_set_id`, set.id)
-        .select(`${SET_DOCS}.extractor_id`, `${DOC_EXECUTIONS}.metadata`);
+        .select(`${SET_DOCS}.extractor_id`, `${SET_DOCS}.document_execution_id`, `${DOC_EXECUTIONS}.metadata`);
       const setDocs = rows.map((r) => ({
         extractor_id: r.extractor_id,
-        metadata: JSON.parse(r.metadata || '{}'),
+        document_execution_id: r.document_execution_id,
+        metadata: typeof r.metadata === 'object' ? r.metadata : JSON.parse(r.metadata || '{}'),
       }));
       result.push({ ...set, setDocs });
     }
     return result;
+  },
+
+  // Find pending matching sets for a specific variation.
+  async findPendingMatchingSetsByVariation(variationId) {
+    const sets = await db(MATCHING_SETS)
+      .where({ variation_id: variationId, status: 'pending' })
+      .orderBy('created_at', 'asc');
+    if (sets.length === 0) return [];
+    const result = [];
+    for (const set of sets) {
+      const rows = await db(SET_DOCS)
+        .join(DOC_EXECUTIONS, `${SET_DOCS}.document_execution_id`, `${DOC_EXECUTIONS}.id`)
+        .where(`${SET_DOCS}.matching_set_id`, set.id)
+        .select(`${SET_DOCS}.extractor_id`, `${SET_DOCS}.document_execution_id`, `${DOC_EXECUTIONS}.metadata`);
+      const setDocs = rows.map((r) => ({
+        extractor_id: r.extractor_id,
+        document_execution_id: r.document_execution_id,
+        metadata: typeof r.metadata === 'object' ? r.metadata : JSON.parse(r.metadata || '{}'),
+      }));
+      result.push({ ...set, setDocs });
+    }
+    return result;
+  },
+
+  // All matching sets for an anchor document execution.
+  async findMatchingSetsByAnchor(anchorDocExecId) {
+    return db(MATCHING_SETS).where({ anchor_document_execution_id: anchorDocExecId });
+  },
+
+  // Rules where the given extractor is the anchor OR a target, for a specific user.
+  async findRulesForExtractor(userId, extractorId) {
+    const anchorRules = await db(RULES).where({ user_id: userId, anchor_extractor_id: extractorId });
+    const targetRows = await db(TARGET_EXTRACTORS).where({ extractor_id: extractorId });
+    const targetRuleIds = targetRows.map((r) => r.rule_id);
+    const targetRules = targetRuleIds.length
+      ? await db(RULES).where({ user_id: userId }).whereIn('id', targetRuleIds)
+      : [];
+    // De-duplicate: extractor could be both anchor and target in edge cases
+    const anchorIds = new Set(anchorRules.map((r) => r.id));
+    const merged = [...anchorRules, ...targetRules.filter((r) => !anchorIds.has(r.id))];
+    return merged;
+  },
+
+  // ── Held Documents ────────────────────────────────────────────────────────
+
+  async upsertHeldDoc({ userId, documentExecutionId, extractorId, workflowId, nodeId, slotId, slotLabel }) {
+    const existing = await db(HELD_DOCS).where({ document_execution_id: documentExecutionId }).first();
+    if (existing) return existing;
+    const [row] = await db(HELD_DOCS)
+      .insert({
+        user_id: userId,
+        document_execution_id: documentExecutionId,
+        extractor_id: extractorId,
+        workflow_id: workflowId || null,
+        node_id: nodeId || null,
+        slot_id: slotId || null,
+        slot_label: slotLabel || null,
+        held_at: new Date(),
+      })
+      .returning('*');
+    return row;
+  },
+
+  async findHeldDocByDocExecId(documentExecutionId) {
+    return db(HELD_DOCS).where({ document_execution_id: documentExecutionId }).first();
+  },
+
+  async updateHeldDocStatus(id, status) {
+    const [row] = await db(HELD_DOCS).where({ id }).update({ status }).returning('*');
+    return row;
+  },
+
+  async findHeldDocs(userId) {
+    return db(HELD_DOCS)
+      .join(DOC_EXECUTIONS, `${HELD_DOCS}.document_execution_id`, `${DOC_EXECUTIONS}.id`)
+      .join(DOCUMENTS, `${DOC_EXECUTIONS}.document_id`, `${DOCUMENTS}.id`)
+      .leftJoin(WORKFLOWS, `${HELD_DOCS}.workflow_id`, `${WORKFLOWS}.id`)
+      .join('extractors', `${HELD_DOCS}.extractor_id`, 'extractors.id')
+      .where(`${HELD_DOCS}.user_id`, userId)
+      .select(
+        `${HELD_DOCS}.*`,
+        `${DOCUMENTS}.file_name`,
+        `${WORKFLOWS}.name as workflow_name`,
+        'extractors.name as extractor_name',
+      )
+      .orderBy(`${HELD_DOCS}.held_at`, 'desc');
+  },
+
+  async findHeldDocMatchingSets(documentExecutionId) {
+    return db(SET_DOCS)
+      .join(MATCHING_SETS, `${SET_DOCS}.matching_set_id`, `${MATCHING_SETS}.id`)
+      .join(RULES, `${MATCHING_SETS}.rule_id`, `${RULES}.id`)
+      .where(`${SET_DOCS}.document_execution_id`, documentExecutionId)
+      .select(
+        `${MATCHING_SETS}.id`,
+        `${MATCHING_SETS}.status`,
+        `${MATCHING_SETS}.variation_id`,
+        `${RULES}.name as rule_name`,
+      );
+  },
+
+  async findAnchorDocs(userId, ruleId) {
+    const rows = await db(MATCHING_SETS)
+      .where(`${MATCHING_SETS}.rule_id`, ruleId)
+      .join(DOC_EXECUTIONS, `${MATCHING_SETS}.anchor_document_execution_id`, `${DOC_EXECUTIONS}.id`)
+      .join(DOCUMENTS, `${DOC_EXECUTIONS}.document_id`, `${DOCUMENTS}.id`)
+      .leftJoin(HELD_DOCS, `${HELD_DOCS}.document_execution_id`, `${MATCHING_SETS}.anchor_document_execution_id`)
+      .select(
+        `${MATCHING_SETS}.anchor_document_execution_id`,
+        `${HELD_DOCS}.id as held_doc_id`,
+        `${HELD_DOCS}.status as held_status`,
+        `${HELD_DOCS}.slot_id`,
+        `${HELD_DOCS}.slot_label`,
+        `${DOCUMENTS}.file_name`,
+        `${MATCHING_SETS}.id as set_id`,
+        `${MATCHING_SETS}.status as set_status`,
+        `${MATCHING_SETS}.variation_id`,
+      )
+      .orderBy(`${HELD_DOCS}.held_at`, 'desc');
+
+    // Group by anchor_document_execution_id
+    const grouped = {};
+    for (const row of rows) {
+      const key = row.anchor_document_execution_id;
+      if (!grouped[key]) {
+        grouped[key] = {
+          anchor_document_execution_id: key,
+          held_doc_id: row.held_doc_id,
+          held_status: row.held_status,
+          file_name: row.file_name,
+          sets: [],
+        };
+      }
+      grouped[key].sets.push({
+        id: row.set_id,
+        status: row.set_status,
+        variation_id: row.variation_id,
+      });
+    }
+    return Object.values(grouped);
+  },
+
+  // ── Comparison Results ────────────────────────────────────────────────────
+
+  async upsertComparisonResult({ matchingSetId, comparisonRuleId, status, note }) {
+    const existing = await db(COMPARISON_RESULTS)
+      .where({ matching_set_id: matchingSetId, comparison_rule_id: comparisonRuleId })
+      .first();
+    const resolved_at = status !== 'pending' ? new Date() : null;
+    if (existing) {
+      const [row] = await db(COMPARISON_RESULTS)
+        .where({ id: existing.id })
+        .update({ status, note: note || null, resolved_at })
+        .returning('*');
+      return row;
+    }
+    const [row] = await db(COMPARISON_RESULTS)
+      .insert({ matching_set_id: matchingSetId, comparison_rule_id: comparisonRuleId, status, note: note || null, resolved_at })
+      .returning('*');
+    return row;
+  },
+
+  async findComparisonResults(matchingSetId) {
+    return db(COMPARISON_RESULTS)
+      .join(COMPARISON_RULES, `${COMPARISON_RESULTS}.comparison_rule_id`, `${COMPARISON_RULES}.id`)
+      .where(`${COMPARISON_RESULTS}.matching_set_id`, matchingSetId)
+      .select(
+        `${COMPARISON_RESULTS}.*`,
+        `${COMPARISON_RULES}.formula`,
+        `${COMPARISON_RULES}.level`,
+        `${COMPARISON_RULES}.tolerance_type`,
+        `${COMPARISON_RULES}.tolerance_value`,
+      );
+  },
+
+  async isVariationFullyReconciled(matchingSetId, variationId) {
+    const compRules = await db(COMPARISON_RULES).where({ variation_id: variationId });
+    if (compRules.length === 0) return true; // no comparisons = trivially reconciled
+    const results = await db(COMPARISON_RESULTS).where({ matching_set_id: matchingSetId });
+    return compRules.every((cr) => {
+      const res = results.find((r) => r.comparison_rule_id === cr.id);
+      return res && (res.status === 'auto' || res.status === 'force');
+    });
   },
 };

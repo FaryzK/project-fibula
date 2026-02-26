@@ -55,7 +55,7 @@ function findEntryNodes(nodes, edges) {
  *   { type: 'fanout', subDocuments: [{file_url, file_name, file_type, label}] }
  *   { type: 'hold' }
  */
-async function processNode(node, metadata, workflowRunId, docExecutionId, workflowId) {
+async function processNode(node, metadata, workflowRunId, docExecutionId, workflowId, userId) {
   const config = node.config || {};
 
   switch (node.node_type) {
@@ -187,17 +187,25 @@ async function processNode(node, metadata, workflowRunId, docExecutionId, workfl
     }
 
     case 'RECONCILIATION': {
-      if (!config.reconciliation_rule_id) {
+      const recon_inputs = config.recon_inputs || [];
+      if (recon_inputs.length === 0) {
         return { type: 'continue', outputMetadata: { ...metadata }, outputPort: 'default' };
       }
-      const result = await reconciliationService.processDocument({
-        ruleId: config.reconciliation_rule_id,
+      const extractorId = metadata._extractor_id;
+      const slot = recon_inputs.find((s) => s.extractor_id === extractorId);
+      if (!slot) {
+        return { type: 'continue', outputMetadata: { ...metadata }, outputPort: 'default' };
+      }
+      return reconciliationService.processDocument({
         docExecutionId,
         metadata,
         workflowId,
         nodeId: node.id,
+        userId,
+        slotId: slot.id,
+        slotLabel: slot.label,
+        extractorId,
       });
-      return result;
     }
 
     case 'HTTP': {
@@ -313,7 +321,7 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
     let logError = null;
 
     try {
-      result = await processNode(node, metadata, workflowRunId, docExecution.id, workflowId);
+      result = await processNode(node, metadata, workflowRunId, docExecution.id, workflowId, workflowUserId);
     } catch (err) {
       logStatus = 'failed';
       logError = err.message;
@@ -375,13 +383,16 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
       queue.push({ nodeId: edge.targetNodeId, metadata: outputMetadata });
     }
 
-    // For reconciliation: also advance other docs in the matching set
+    // For reconciliation: also advance other docs in the matching set, each on their slot port
     if (setDocExecIds && setDocExecIds.length > 0) {
-      for (const otherId of setDocExecIds) {
+      for (const item of setDocExecIds) {
+        const otherId = typeof item === 'object' ? item.docExecutionId : item;
+        const otherPort = typeof item === 'object' ? item.outputPort : outputPort;
         const otherExec = await documentExecutionModel.findById(otherId);
         if (otherExec && otherExec.status === 'held') {
           const otherMeta = parseMeta(otherExec.metadata);
-          const startQ = nextEdges.map((e) => ({ nodeId: e.targetNodeId, metadata: otherMeta }));
+          const otherEdges = (graph[nodeId] || []).filter((e) => e.sourcePort === otherPort);
+          const startQ = otherEdges.map((e) => ({ nodeId: e.targetNodeId, metadata: otherMeta }));
           pendingExecQueue.push({ docExecution: otherExec, startQueue: startQ });
         }
       }
@@ -426,7 +437,7 @@ async function runWorkflow(workflowRunId) {
 /**
  * Resume a single document execution from a specific node (after hold is released).
  */
-async function resumeDocumentExecution(docExecutionId, fromNodeId, workflowRunId) {
+async function resumeDocumentExecution(docExecutionId, fromNodeId, workflowRunId, outputPort = null) {
   const [docExec, run] = await Promise.all([
     documentExecutionModel.findById(docExecutionId),
     workflowRunModel.findById(workflowRunId),
@@ -441,10 +452,9 @@ async function resumeDocumentExecution(docExecutionId, fromNodeId, workflowRunId
   const graph = buildGraph(edges);
   const meta = parseMeta(docExec.metadata);
 
-  const startQueue = (graph[fromNodeId] || []).map((e) => ({
-    nodeId: e.targetNodeId,
-    metadata: meta,
-  }));
+  const startQueue = (graph[fromNodeId] || [])
+    .filter((e) => !outputPort || e.sourcePort === outputPort)
+    .map((e) => ({ nodeId: e.targetNodeId, metadata: meta }));
 
   await documentExecutionModel.updateStatus(docExecutionId, { status: 'processing' });
 

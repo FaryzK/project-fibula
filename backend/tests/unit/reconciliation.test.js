@@ -167,28 +167,28 @@ describe('Reconciliation Rule routes', () => {
     });
   });
 
-  describe('GET /api/reconciliation-rules/all-matching-sets', () => {
-    it('returns all matching sets across rules', async () => {
-      reconciliationModel.findAllMatchingSets.mockResolvedValue([
-        { ...FAKE_MATCHING_SET, rule_name: 'PO vs Invoice' },
-      ]);
+  describe('GET /api/reconciliation-rules/documents', () => {
+    it('returns all held documents', async () => {
+      const FAKE_HELD_DOC = {
+        id: 'hd-1',
+        document_execution_id: 'exec-1',
+        extractor_id: 'ext-po',
+        status: 'held',
+        held_at: '2024-06-01T00:00:00Z',
+      };
+      reconciliationModel.findHeldDocs.mockResolvedValue([FAKE_HELD_DOC]);
+      reconciliationModel.findHeldDocMatchingSets.mockResolvedValue([]);
       const res = await request(app)
-        .get('/api/reconciliation-rules/all-matching-sets')
+        .get('/api/reconciliation-rules/documents')
         .set(authHeaders());
       expect(res.statusCode).toBe(200);
       expect(res.body).toHaveLength(1);
-      expect(res.body[0].rule_name).toBe('PO vs Invoice');
+      expect(res.body[0].document_execution_id).toBe('exec-1');
     });
 
-    it('passes status filter query param', async () => {
-      reconciliationModel.findAllMatchingSets.mockResolvedValue([]);
-      await request(app)
-        .get('/api/reconciliation-rules/all-matching-sets?status=pending')
-        .set(authHeaders());
-      expect(reconciliationModel.findAllMatchingSets).toHaveBeenCalledWith(
-        'db-uuid-1',
-        { status: 'pending' }
-      );
+    it('returns 401 without auth', async () => {
+      const res = await request(app).get('/api/reconciliation-rules/documents');
+      expect(res.statusCode).toBe(401);
     });
   });
 

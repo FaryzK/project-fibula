@@ -15,6 +15,7 @@ const TABS = [
   { id: 'extractors', label: 'Extractors' },
   { id: 'data-mapper', label: 'Data Mapper' },
   { id: 'reconciliation', label: 'Reconciliation' },
+  { id: 'document-folders', label: 'Document Folders' },
   { id: 'splitting', label: 'Document Splitting' },
   { id: 'categorisation', label: 'Categorisation' },
 ];

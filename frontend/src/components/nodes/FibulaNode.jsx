@@ -27,8 +27,8 @@ const NODE_CATEGORIES = {
 /** Build the list of input port handles for a node */
 function getInputHandles(nodeType, config) {
   if (nodeType === 'RECONCILIATION') {
-    const inputs = config?.reconciliation_inputs || [];
-    if (inputs.length > 0) return inputs.map((inp) => ({ id: inp.id, label: inp.name }));
+    const slots = config?.recon_inputs || [];
+    if (slots.length > 0) return slots.map((s) => ({ id: s.id, label: s.label || s.id }));
     return [{ id: 'default', label: '' }];
   }
   return [{ id: 'default', label: '' }];
@@ -37,6 +37,11 @@ function getInputHandles(nodeType, config) {
 /** Build the list of output port handles for a node */
 function getOutputHandles(nodeType, config) {
   switch (nodeType) {
+    case 'RECONCILIATION': {
+      const slots = config?.recon_inputs || [];
+      if (slots.length > 0) return slots.map((s) => ({ id: s.id, label: s.label || s.id }));
+      return [{ id: 'default', label: '' }];
+    }
     case 'IF':
       return [
         { id: 'true',  label: 'True' },
