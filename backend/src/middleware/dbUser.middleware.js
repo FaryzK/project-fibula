@@ -2,8 +2,10 @@ const userModel = require('../models/user.model');
 
 async function dbUserMiddleware(req, res, next) {
   try {
-    const dbUser = await userModel.findBySupabaseId(req.user.id);
-    if (!dbUser) return res.status(404).json({ error: 'User profile not found' });
+    const { id: supabaseAuthId, email, user_metadata } = req.user;
+    const firstName = user_metadata?.full_name?.split(' ')[0] || user_metadata?.name?.split(' ')[0] || '';
+    const lastName = user_metadata?.full_name?.split(' ').slice(1).join(' ') || '';
+    const dbUser = await userModel.upsertUser({ supabaseAuthId, email, firstName, lastName });
     req.dbUser = dbUser;
     next();
   } catch (err) {

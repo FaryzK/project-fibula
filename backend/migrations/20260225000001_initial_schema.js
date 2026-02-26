@@ -11,7 +11,7 @@ exports.up = async function (knex) {
     t.text('first_name');
     t.text('last_name');
     t.text('profile_icon_url');
-    t.timestamptz('created_at').defaultTo(knex.fn.now());
+    t.timestamp('created_at').defaultTo(knex.fn.now());
   });
 
   // workflows
@@ -20,8 +20,8 @@ exports.up = async function (knex) {
     t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
     t.text('name').notNullable();
     t.boolean('is_published').defaultTo(false);
-    t.timestamptz('created_at').defaultTo(knex.fn.now());
-    t.timestamptz('updated_at').defaultTo(knex.fn.now());
+    t.timestamp('created_at').defaultTo(knex.fn.now());
+    t.timestamp('updated_at').defaultTo(knex.fn.now());
   });
 
   // nodes
@@ -33,7 +33,7 @@ exports.up = async function (knex) {
     t.float('position_x').defaultTo(0);
     t.float('position_y').defaultTo(0);
     t.jsonb('config').defaultTo('{}');
-    t.timestamptz('created_at').defaultTo(knex.fn.now());
+    t.timestamp('created_at').defaultTo(knex.fn.now());
   });
 
   // edges
@@ -53,7 +53,7 @@ exports.up = async function (knex) {
     t.text('file_name').notNullable();
     t.text('file_url').notNullable();
     t.text('file_type').notNullable();
-    t.timestamptz('created_at').defaultTo(knex.fn.now());
+    t.timestamp('created_at').defaultTo(knex.fn.now());
   });
 
   // workflow_runs
@@ -62,20 +62,20 @@ exports.up = async function (knex) {
     t.uuid('workflow_id').notNullable().references('id').inTable('workflows').onDelete('CASCADE');
     t.text('triggered_by').notNullable(); // MANUAL, WEBHOOK
     t.text('status').notNullable().defaultTo('running'); // running, completed, failed
-    t.timestamptz('started_at').defaultTo(knex.fn.now());
-    t.timestamptz('completed_at');
+    t.timestamp('started_at').defaultTo(knex.fn.now());
+    t.timestamp('completed_at');
   });
 
   // document_executions
   await knex.schema.createTable('document_executions', (t) => {
     t.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
     t.uuid('workflow_run_id').notNullable().references('id').inTable('workflow_runs').onDelete('CASCADE');
-    t.uuid('document_id').notNullable().references('id').inTable('documents').onDelete('CASCADE');
+    t.uuid('document_id').nullable().references('id').inTable('documents').onDelete('CASCADE');
     t.uuid('current_node_id').references('id').inTable('nodes').onDelete('SET NULL');
     t.text('status').notNullable().defaultTo('pending'); // pending, processing, completed, held, failed
     t.jsonb('metadata').defaultTo('{}');
-    t.timestamptz('created_at').defaultTo(knex.fn.now());
-    t.timestamptz('updated_at').defaultTo(knex.fn.now());
+    t.timestamp('created_at').defaultTo(knex.fn.now());
+    t.timestamp('updated_at').defaultTo(knex.fn.now());
   });
 
   // node_execution_logs
@@ -86,8 +86,8 @@ exports.up = async function (knex) {
     t.text('status').notNullable(); // processing, completed, failed, held
     t.jsonb('input_metadata').defaultTo('{}');
     t.jsonb('output_metadata').defaultTo('{}');
-    t.timestamptz('started_at').defaultTo(knex.fn.now());
-    t.timestamptz('completed_at');
+    t.timestamp('started_at').defaultTo(knex.fn.now());
+    t.timestamp('completed_at');
     t.text('error');
   });
 
@@ -97,7 +97,7 @@ exports.up = async function (knex) {
     t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
     t.text('name').notNullable();
     t.text('instructions').notNullable();
-    t.timestamptz('created_at').defaultTo(knex.fn.now());
+    t.timestamp('created_at').defaultTo(knex.fn.now());
   });
 
   // categorisation_prompts
@@ -105,7 +105,7 @@ exports.up = async function (knex) {
     t.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
     t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
     t.text('name').notNullable();
-    t.timestamptz('created_at').defaultTo(knex.fn.now());
+    t.timestamp('created_at').defaultTo(knex.fn.now());
   });
 
   // categorisation_labels
@@ -123,7 +123,7 @@ exports.up = async function (knex) {
     t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
     t.text('name').notNullable();
     t.boolean('hold_all').defaultTo(false);
-    t.timestamptz('created_at').defaultTo(knex.fn.now());
+    t.timestamp('created_at').defaultTo(knex.fn.now());
   });
 
   // extractor_header_fields
@@ -162,7 +162,7 @@ exports.up = async function (knex) {
     t.text('target_type').notNullable(); // header_field or table_column
     t.uuid('target_id').notNullable();
     t.text('feedback_text').notNullable();
-    t.timestamptz('created_at').defaultTo(knex.fn.now());
+    t.timestamp('created_at').defaultTo(knex.fn.now());
   });
   // image_embedding column added separately as raw (pgvector type not native to Knex)
   await knex.raw('ALTER TABLE extractor_training_feedback ADD COLUMN image_embedding vector(1536)');
@@ -173,7 +173,7 @@ exports.up = async function (knex) {
     t.uuid('extractor_id').notNullable().references('id').inTable('extractors').onDelete('CASCADE');
     t.uuid('document_execution_id').notNullable().references('id').inTable('document_executions').onDelete('CASCADE');
     t.text('status').notNullable().defaultTo('held'); // held, sent_out
-    t.timestamptz('held_at').defaultTo(knex.fn.now());
+    t.timestamp('held_at').defaultTo(knex.fn.now());
   });
 
   // data_map_sets
@@ -182,7 +182,7 @@ exports.up = async function (knex) {
     t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
     t.text('name').notNullable();
     t.jsonb('headers').defaultTo('[]');
-    t.timestamptz('created_at').defaultTo(knex.fn.now());
+    t.timestamp('created_at').defaultTo(knex.fn.now());
   });
 
   // data_map_records
@@ -198,7 +198,7 @@ exports.up = async function (knex) {
     t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
     t.text('name').notNullable();
     t.uuid('extractor_id').notNullable().references('id').inTable('extractors').onDelete('RESTRICT');
-    t.timestamptz('created_at').defaultTo(knex.fn.now());
+    t.timestamp('created_at').defaultTo(knex.fn.now());
   });
 
   // data_map_rule_lookups
@@ -230,7 +230,7 @@ exports.up = async function (knex) {
     t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
     t.text('name').notNullable();
     t.uuid('anchor_extractor_id').notNullable().references('id').inTable('extractors').onDelete('RESTRICT');
-    t.timestamptz('created_at').defaultTo(knex.fn.now());
+    t.timestamp('created_at').defaultTo(knex.fn.now());
   });
 
   // reconciliation_target_extractors
@@ -285,7 +285,7 @@ exports.up = async function (knex) {
     t.uuid('rule_id').notNullable().references('id').inTable('reconciliation_rules').onDelete('CASCADE');
     t.uuid('anchor_document_execution_id').notNullable().references('id').inTable('document_executions').onDelete('CASCADE');
     t.text('status').notNullable().defaultTo('pending'); // pending, reconciled, rejected, force_reconciled
-    t.timestamptz('created_at').defaultTo(knex.fn.now());
+    t.timestamp('created_at').defaultTo(knex.fn.now());
   });
 
   // reconciliation_matching_set_docs
@@ -301,7 +301,7 @@ exports.up = async function (knex) {
     t.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
     t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
     t.text('name').notNullable();
-    t.timestamptz('created_at').defaultTo(knex.fn.now());
+    t.timestamp('created_at').defaultTo(knex.fn.now());
   });
 
   // document_folder_held
@@ -312,7 +312,7 @@ exports.up = async function (knex) {
     t.uuid('workflow_id').notNullable().references('id').inTable('workflows').onDelete('CASCADE');
     t.uuid('node_id').notNullable().references('id').inTable('nodes').onDelete('CASCADE');
     t.text('status').notNullable().defaultTo('held'); // held, sent_out
-    t.timestamptz('arrived_at').defaultTo(knex.fn.now());
+    t.timestamp('arrived_at').defaultTo(knex.fn.now());
   });
 };
 
