@@ -26,42 +26,35 @@ async function generateEmbedding(text) {
 }
 
 /**
- * Produce a text description of a document suitable for embedding.
- * - PDF: extracts raw text via pdf-parse
- * - Image: asks gpt-4o-mini to describe the document
+ * Produce a text description of a document for embedding / similarity search.
+ * Uses the Responses API so it works for both text-based and image-based PDFs and images.
  */
 async function describeDocument(fileBuffer, fileType) {
-  const isPdf = fileType === 'application/pdf';
-  if (isPdf) {
-    try {
-      const pdfParse = require('pdf-parse');
-      const data = await pdfParse(fileBuffer);
-      return data.text || '[empty PDF]';
-    } catch (_) {
-      return '[PDF document — could not extract text]';
-    }
-  }
-
-  // Image: use gpt-4o-mini to describe it
   const base64 = fileBuffer.toString('base64');
+  const isPdf = fileType === 'application/pdf';
+
   try {
-    const response = await openai.chat.completions.create({
+    const contentItem = isPdf
+      ? { type: 'input_file', filename: 'document.pdf', file_data: `data:application/pdf;base64,${base64}` }
+      : { type: 'input_image', image_url: `data:${fileType};base64,${base64}` };
+
+    const response = await openai.responses.create({
       model: 'gpt-4o-mini',
-      messages: [
+      input: [
         {
           role: 'user',
           content: [
-            { type: 'image_url', image_url: { url: `data:${fileType};base64,${base64}` } },
-            { type: 'text', text: 'Describe this document in detail, including all visible text, numbers, dates, and layout. Be thorough.' },
+            contentItem,
+            { type: 'input_text', text: 'Describe this document in detail, including all visible text, numbers, dates, and layout. Be thorough.' },
           ],
         },
       ],
-      max_tokens: 1000,
+      max_output_tokens: 1000,
     });
-    return response.choices[0].message.content;
+    return response.output_text;
   } catch (err) {
     console.error('Failed to describe document:', err.message);
-    return '[image document — could not describe]';
+    return '[document — could not describe]';
   }
 }
 
@@ -98,6 +91,37 @@ function buildFeedbackContext(feedbackItems) {
 }
 
 /**
+ * Core extraction call using the Responses API.
+ * Passes the file directly (PDF or image) as base64 — works like ChatGPT file attachments.
+ */
+async function runExtraction(fileBuffer, fileType, systemPrompt) {
+  const base64 = fileBuffer.toString('base64');
+  const isPdf = fileType === 'application/pdf';
+
+  const contentItem = isPdf
+    ? { type: 'input_file', filename: 'document.pdf', file_data: `data:application/pdf;base64,${base64}` }
+    : { type: 'input_image', image_url: `data:${fileType};base64,${base64}` };
+
+  const response = await openai.responses.create({
+    model: 'gpt-4o',
+    instructions: systemPrompt,
+    input: [
+      {
+        role: 'user',
+        content: [
+          contentItem,
+          { type: 'input_text', text: 'Extract data according to the schema.' },
+        ],
+      },
+    ],
+    text: { format: { type: 'json_object' } },
+    max_output_tokens: 2000,
+  });
+
+  return JSON.parse(response.output_text);
+}
+
+/**
  * Run VLM extraction on a document (fetched by URL) using an extractor schema.
  * Returns { header, tables, document_description }
  */
@@ -114,30 +138,7 @@ async function extractData(document, extractor) {
   const feedbackContext = buildFeedbackContext(feedback);
   const systemPrompt = schemaPrompt + feedbackContext;
 
-  const isPdf = fileType === 'application/pdf';
-  let userMessage;
-
-  if (isPdf) {
-    userMessage = { role: 'user', content: `Document text:\n${document_description}` };
-  } else {
-    const base64 = fileBuffer.toString('base64');
-    userMessage = {
-      role: 'user',
-      content: [
-        { type: 'image_url', image_url: { url: `data:${fileType};base64,${base64}` } },
-        { type: 'text', text: 'Extract data according to the schema.' },
-      ],
-    };
-  }
-
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [{ role: 'system', content: systemPrompt }, userMessage],
-    response_format: { type: 'json_object' },
-    max_tokens: 2000,
-  });
-
-  const parsed = JSON.parse(response.choices[0].message.content);
+  const parsed = await runExtraction(fileBuffer, fileType, systemPrompt);
   return {
     header: parsed.header || {},
     tables: parsed.tables || {},
@@ -158,30 +159,7 @@ async function testExtractFromBuffer(fileBuffer, fileType, extractor) {
   const feedbackContext = buildFeedbackContext(feedback);
   const systemPrompt = schemaPrompt + feedbackContext;
 
-  const isPdf = fileType === 'application/pdf';
-  let userMessage;
-
-  if (isPdf) {
-    userMessage = { role: 'user', content: `Document text:\n${document_description}` };
-  } else {
-    const base64 = fileBuffer.toString('base64');
-    userMessage = {
-      role: 'user',
-      content: [
-        { type: 'image_url', image_url: { url: `data:${fileType};base64,${base64}` } },
-        { type: 'text', text: 'Extract data according to the schema.' },
-      ],
-    };
-  }
-
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [{ role: 'system', content: systemPrompt }, userMessage],
-    response_format: { type: 'json_object' },
-    max_tokens: 2000,
-  });
-
-  const parsed = JSON.parse(response.choices[0].message.content);
+  const parsed = await runExtraction(fileBuffer, fileType, systemPrompt);
   return {
     header: parsed.header || {},
     tables: parsed.tables || {},

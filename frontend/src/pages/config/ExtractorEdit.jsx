@@ -425,8 +425,8 @@ function ExtractorEdit() {
                   </div>
                 )}
 
-                {/* Header fields results */}
-                {Object.keys(testResult.header).length > 0 && (
+                {/* Header fields results — always show if schema has fields */}
+                {headerFields.length > 0 && (
                   <div>
                     <h3 className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide mb-2">Header Fields</h3>
                     <div className="border border-gray-200 dark:border-gray-600 rounded-lg overflow-hidden">
@@ -435,33 +435,36 @@ function ExtractorEdit() {
                           <tr>
                             <th className="text-left px-3 py-2 font-medium text-gray-600 dark:text-gray-300 w-1/3">Field</th>
                             <th className="text-left px-3 py-2 font-medium text-gray-600 dark:text-gray-300">Extracted value</th>
-                            <th className="px-3 py-2 w-20"></th>
+                            <th className="px-3 py-2 w-24"></th>
                           </tr>
                         </thead>
                         <tbody>
-                          {Object.entries(testResult.header).map(([fieldName, value]) => {
-                            const hf = headerFields.find((f) => f.field_name === fieldName);
-                            const targetId = hf?.id || fieldName;
+                          {headerFields.map((hf) => {
+                            const value = testResult.header[hf.field_name];
+                            const targetId = hf.id || hf.field_name;
                             const isActive = feedbackTarget?.targetId === targetId && feedbackTarget?.targetType === 'header_field';
                             return (
-                              <tr key={fieldName} className="border-t border-gray-100 dark:border-gray-700">
-                                <td className="px-3 py-2 font-medium text-gray-700 dark:text-gray-300">{fieldName}</td>
+                              <tr key={hf.field_name} className="border-t border-gray-100 dark:border-gray-700">
+                                <td className="px-3 py-2 font-medium text-gray-700 dark:text-gray-300">
+                                  {hf.field_name}
+                                  {hf.is_mandatory && <span className="ml-1 text-red-400">*</span>}
+                                </td>
                                 <td className="px-3 py-2 text-gray-900 dark:text-white">
                                   {value === null || value === undefined || value === '' ? (
                                     <span className="text-gray-400 italic">—</span>
                                   ) : String(value)}
                                   {isActive && (
                                     <FeedbackInlineForm
-                                      label={fieldName}
+                                      label={hf.field_name}
                                       saving={savingFeedback}
-                                      onSave={(text) => handleSaveFeedback('header_field', targetId, fieldName, text)}
+                                      onSave={(text) => handleSaveFeedback('header_field', targetId, hf.field_name, text)}
                                       onCancel={() => setFeedbackTarget(null)}
                                     />
                                   )}
                                 </td>
                                 <td className="px-3 py-2 text-right">
                                   <button
-                                    onClick={() => setFeedbackTarget(isActive ? null : { targetType: 'header_field', targetId, label: fieldName })}
+                                    onClick={() => setFeedbackTarget(isActive ? null : { targetType: 'header_field', targetId, label: hf.field_name })}
                                     className="text-xs text-yellow-600 hover:text-yellow-800 dark:text-yellow-400 dark:hover:text-yellow-200"
                                   >
                                     {isActive ? 'Cancel' : 'Give feedback'}
@@ -476,10 +479,19 @@ function ExtractorEdit() {
                   </div>
                 )}
 
+                {/* No schema defined */}
+                {headerFields.length === 0 && tableTypes.length === 0 && (
+                  <p className="text-xs text-gray-400 italic">
+                    No fields defined in the schema. Add header fields or table types above, then save before testing.
+                  </p>
+                )}
+
                 {/* Table results */}
-                {Object.entries(testResult.tables).map(([tableName, rows]) => {
-                  const tt = tableTypes.find((t) => t.type_name === tableName);
-                  const columns = rows.length > 0 ? Object.keys(rows[0]) : (tt?.columns || []).map((c) => c.column_name);
+                {/* Table results — iterate schema table types so we always show defined tables */}
+                {tableTypes.map((tt) => {
+                  const tableName = tt.type_name;
+                  const rows = testResult.tables[tableName] || [];
+                  const columns = tt.columns.length > 0 ? tt.columns.map((c) => c.column_name) : (rows.length > 0 ? Object.keys(rows[0]) : []);
                   return (
                     <div key={tableName}>
                       <h3 className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide mb-2">
