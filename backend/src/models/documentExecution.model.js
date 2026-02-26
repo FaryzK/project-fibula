@@ -90,7 +90,7 @@ module.exports = {
       .join(TABLE, `${LOG_TABLE}.document_execution_id`, `${TABLE}.id`)
       .where(`${TABLE}.workflow_run_id`, workflowRunId)
       .where(`${LOG_TABLE}.node_id`, nodeId)
-      .orderBy(`${LOG_TABLE}.created_at`, 'desc')
+      .orderBy(`${LOG_TABLE}.started_at`, 'desc')
       .select(`${LOG_TABLE}.*`)
       .first();
   },

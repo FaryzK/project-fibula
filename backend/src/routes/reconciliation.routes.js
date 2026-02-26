@@ -11,6 +11,7 @@ router.post('/', controller.create);
 // Specific routes before /:id to avoid param conflicts
 router.get('/documents', controller.listHeldDocs);
 router.post('/documents/:heldDocId/reject', controller.rejectDoc);
+router.delete('/documents/:heldDocId', controller.deleteDoc);
 router.get('/:id', controller.getOne);
 router.patch('/:id', controller.update);
 router.delete('/:id', controller.remove);

@@ -494,6 +494,7 @@ function MetaBlock({ label, data }) {
 function NodePanel({ node, onClose }) {
   const navigate = useNavigate();
   const { workflowId, deleteNode, renameNode, activeRunId } = useCanvasStore();
+  const nodeStatusKey = useCanvasStore((s) => JSON.stringify(s.nodeStatuses[node.id]));
   const nodeType = node.data.nodeType;
 
   const [splittingOptions, setSplittingOptions] = useState([]);
@@ -523,7 +524,7 @@ function NodePanel({ node, onClose }) {
     executionService.getNodeLog(activeRunId, node.id)
       .then(({ data }) => setNodeLog(data))
       .catch(() => setNodeLog(null));
-  }, [activeRunId, node.id]);
+  }, [activeRunId, node.id, nodeStatusKey]);
 
   async function saveConfig(newConfig) {
     setSaving(true);

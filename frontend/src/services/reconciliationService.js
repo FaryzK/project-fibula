@@ -18,6 +18,8 @@ const reconciliationService = {
     api.get('/reconciliation-rules/documents').then((r) => r.data),
   rejectDoc: (heldDocId) =>
     api.post(`/reconciliation-rules/documents/${heldDocId}/reject`),
+  deleteDoc: (heldDocId) =>
+    api.delete(`/reconciliation-rules/documents/${heldDocId}`),
 
   // New: Anchor docs per rule
   listAnchorDocs: (ruleId) =>
