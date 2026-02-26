@@ -26,6 +26,7 @@ function ReconciliationRuleEdit() {
   const navigate = useNavigate();
 
   const [name, setName] = useState('');
+  const [autoSendOut, setAutoSendOut] = useState(false);
   const [anchorExtractorId, setAnchorExtractorId] = useState('');
   const [targetExtractors, setTargetExtractors] = useState([]);
   const [variations, setVariations] = useState([]);
@@ -47,6 +48,7 @@ function ReconciliationRuleEdit() {
         if (!isNew) {
           const { rule, usage: u } = await reconciliationService.getOne(id);
           setName(rule.name);
+          setAutoSendOut(rule.auto_send_out || false);
           setAnchorExtractorId(rule.anchor_extractor_id || '');
           setTargetExtractors(rule.target_extractors || []);
           setVariations(rule.variations || []);
@@ -87,7 +89,7 @@ function ReconciliationRuleEdit() {
   function addVariation() {
     setVariations((prev) => [
       ...prev,
-      { variation_order: prev.length + 1, doc_matching_links: [], table_matching_keys: [], comparison_rules: [] },
+      { doc_matching_links: [], table_matching_keys: [], comparison_rules: [] },
     ]);
   }
 
@@ -234,7 +236,7 @@ function ReconciliationRuleEdit() {
     setSaving(true);
     setError(null);
     try {
-      const payload = { name, anchor_extractor_id: anchorExtractorId, target_extractors: targetExtractors, variations };
+      const payload = { name, auto_send_out: autoSendOut, anchor_extractor_id: anchorExtractorId, target_extractors: targetExtractors, variations };
       if (isNew) {
         await reconciliationService.create(payload);
         navigate('/app?tab=reconciliation');
@@ -284,6 +286,19 @@ function ReconciliationRuleEdit() {
                 required
               />
             </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Auto send out when fully reconciled</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">If enabled, the anchor document is sent out automatically once any variation is fully reconciled.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAutoSendOut((v) => !v)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${autoSendOut ? 'bg-indigo-600' : 'bg-gray-300 dark:bg-gray-600'}`}
+              >
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${autoSendOut ? 'translate-x-6' : 'translate-x-1'}`} />
+              </button>
+            </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Anchor extractor</label>
               <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">The primary document — the source of truth that other documents are reconciled against</p>
@@ -327,8 +342,8 @@ function ReconciliationRuleEdit() {
           <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Variations (Waterfall Logic)</h2>
-                <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">The system tries Variation 1 first; if matching fails it falls back to Variation 2, and so on</p>
+                <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Variations</h2>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">All variations run in parallel. The anchor is fully reconciled when any one variation has all comparisons resolved.</p>
               </div>
               <button type="button" onClick={addVariation} className="text-xs text-indigo-600 hover:underline shrink-0">+ Add variation</button>
             </div>

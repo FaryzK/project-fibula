@@ -514,8 +514,8 @@ function NodePanel({ node, onClose }) {
     if (nodeType === 'CATEGORISATION') categorisationService.getAll().then(({ data }) => setCategorisationOptions(data));
     if (nodeType === 'DOCUMENT_FOLDER') documentFolderService.list().then((data) => setFolderOptions(data));
     if (nodeType === 'EXTRACTOR') extractorService.list().then((data) => setExtractorOptions(data));
+    if (nodeType === 'RECONCILIATION') extractorService.list().then((data) => setExtractorOptions(data));
     if (nodeType === 'DATA_MAPPER') dataMapperService.listRules().then((data) => setDataMapRuleOptions(data));
-    if (nodeType === 'RECONCILIATION') reconciliationService.list().then((data) => setReconciliationOptions(data));
   }, [nodeType]);
 
   useEffect(() => {
@@ -822,75 +822,72 @@ function NodePanel({ node, onClose }) {
 
         {nodeType === 'RECONCILIATION' && (
           <div className="space-y-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
-                Reconciliation Rule
-              </label>
-              <select
-                value={config.reconciliation_rule_id || ''}
-                onChange={async (e) => {
-                  const ruleId = e.target.value || null;
-                  if (!ruleId) {
-                    const newConfig = { ...config, reconciliation_rule_id: null, reconciliation_inputs: [] };
-                    setConfig(newConfig);
-                    saveConfig(newConfig);
-                    return;
-                  }
-                  let newConfig;
-                  try {
-                    const { rule } = await reconciliationService.getOne(ruleId);
-                    const inputs = [];
-                    if (rule.anchor_extractor_id) inputs.push({ id: 'anchor', name: 'Anchor' });
-                    (rule.target_extractors || []).forEach((t, i) => {
-                      inputs.push({ id: `target_${i}`, name: t.extractor_name || `Target ${i + 1}` });
-                    });
-                    newConfig = { ...config, reconciliation_rule_id: ruleId, reconciliation_inputs: inputs };
-                  } catch {
-                    newConfig = { ...config, reconciliation_rule_id: ruleId, reconciliation_inputs: [] };
-                  }
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium text-gray-600 dark:text-gray-400">Extractor Inputs</p>
+              <button
+                onClick={() => {
+                  const slots = config.recon_inputs || [];
+                  const newSlot = { id: `slot_${Date.now()}`, extractor_id: '', label: '' };
+                  const newConfig = { ...config, recon_inputs: [...slots, newSlot] };
                   setConfig(newConfig);
                   saveConfig(newConfig);
                 }}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
               >
-                <option value="">— Select a rule —</option>
-                {reconciliationOptions.map((r) => (
-                  <option key={r.id} value={r.id}>{r.name}</option>
-                ))}
-              </select>
-              {reconciliationOptions.length === 0 && (
-                <button
-                  onClick={() => navigate('/app/reconciliation-rules/new')}
-                  className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
-                >
-                  Create a reconciliation rule →
-                </button>
-              )}
-              {config.reconciliation_rule_id && (
-                <div className="mt-2 flex gap-3">
-                  <button
-                    onClick={() => navigate(`/app/reconciliation-rules/${config.reconciliation_rule_id}`)}
-                    className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
-                  >
-                    Edit rule →
-                  </button>
-                  <button
-                    onClick={() => navigate(`/app/reconciliation-rules/${config.reconciliation_rule_id}?tab=matchingSets`)}
-                    className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
-                  >
-                    View matching sets →
-                  </button>
-                </div>
-              )}
+                + Add input
+              </button>
             </div>
-            {config.reconciliation_inputs?.length > 0 && (
-              <p className="text-xs text-gray-400">
-                Input ports:{' '}
-                {config.reconciliation_inputs.map((inp) => (
-                  <span key={inp.id} className="font-mono text-indigo-600 dark:text-indigo-400 mr-1">{inp.name}</span>
-                ))}
+            {(config.recon_inputs || []).length === 0 && (
+              <p className="text-xs text-gray-400 dark:text-gray-500">
+                Add extractor inputs to define the document types this node accepts.
               </p>
             )}
+            {(config.recon_inputs || []).map((slot, idx) => (
+              <div key={slot.id} className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder={`Input ${idx + 1} label`}
+                  value={slot.label}
+                  onChange={(e) => {
+                    const updated = (config.recon_inputs || []).map((s) =>
+                      s.id === slot.id ? { ...s, label: e.target.value } : s
+                    );
+                    setConfig({ ...config, recon_inputs: updated });
+                  }}
+                  onBlur={() => saveConfig(config)}
+                  className="flex-1 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+                <select
+                  value={slot.extractor_id}
+                  onChange={(e) => {
+                    const updated = (config.recon_inputs || []).map((s) =>
+                      s.id === slot.id ? { ...s, extractor_id: e.target.value } : s
+                    );
+                    const newConfig = { ...config, recon_inputs: updated };
+                    setConfig(newConfig);
+                    saveConfig(newConfig);
+                  }}
+                  className="flex-1 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-1 focus:ring-indigo-500"
+                >
+                  <option value="">— Extractor —</option>
+                  {extractorOptions.map((e) => (
+                    <option key={e.id} value={e.id}>{e.name}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => {
+                    const updated = (config.recon_inputs || []).filter((s) => s.id !== slot.id);
+                    const newConfig = { ...config, recon_inputs: updated };
+                    setConfig(newConfig);
+                    saveConfig(newConfig);
+                  }}
+                  className="text-gray-400 hover:text-red-500 transition text-sm font-medium px-1"
+                  title="Remove"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
           </div>
         )}
 
