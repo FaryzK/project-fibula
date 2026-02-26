@@ -78,7 +78,7 @@ function MatchingSetsPill({ sets, docExecId }) {
 
 function ReconciliationTab() {
   const [tab, setTab] = useState('anchor'); // 'anchor' | 'documents'
-  const [selectedRuleId, setSelectedRuleId] = useState('');
+  const [selectedRule, setSelectedRule] = useState(null); // null = rule list, rule obj = anchor docs
   const [anchorDocs, setAnchorDocs] = useState([]);
   const [anchorLoading, setAnchorLoading] = useState(false);
   const [heldDocs, setHeldDocs] = useState([]);
@@ -89,20 +89,15 @@ function ReconciliationTab() {
 
   useEffect(() => { loadRules(); }, [loadRules]);
 
-  // Auto-select first rule when rules load
+  // Load anchor docs when a rule is selected
   useEffect(() => {
-    if (rules.length > 0 && !selectedRuleId) setSelectedRuleId(rules[0].id);
-  }, [rules, selectedRuleId]);
-
-  // Load anchor docs when rule selected
-  useEffect(() => {
-    if (!selectedRuleId) { setAnchorDocs([]); return; }
+    if (!selectedRule) { setAnchorDocs([]); return; }
     setAnchorLoading(true);
-    reconciliationService.listAnchorDocs(selectedRuleId)
+    reconciliationService.listAnchorDocs(selectedRule.id)
       .then((data) => setAnchorDocs(data))
       .catch(() => setAnchorDocs([]))
       .finally(() => setAnchorLoading(false));
-  }, [selectedRuleId]);
+  }, [selectedRule]);
 
   // Load held docs when Documents tab selected
   useEffect(() => {
@@ -127,14 +122,14 @@ function ReconciliationTab() {
       <div className="flex items-center justify-between mb-4">
         <div className="flex gap-2">
           <button
-            onClick={() => setTab('anchor')}
+            onClick={() => { setTab('anchor'); setSelectedRule(null); }}
             className={`px-3 py-1.5 text-sm font-medium rounded-lg transition ${
               tab === 'anchor'
                 ? 'bg-indigo-600 text-white'
                 : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
             }`}
           >
-            Anchor Documents
+            Rules
           </button>
           <button
             onClick={() => setTab('documents')}
@@ -158,57 +153,74 @@ function ReconciliationTab() {
       {/* ── Anchor Documents tab ── */}
       {tab === 'anchor' && (
         <div>
-          {/* Rule selector */}
-          <div className="mb-4">
-            <select
-              value={selectedRuleId}
-              onChange={(e) => setSelectedRuleId(e.target.value)}
-              className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="">— Select a rule —</option>
-              {rules.map((r) => (
-                <option key={r.id} value={r.id}>{r.name}</option>
-              ))}
-            </select>
-            {rules.length === 0 && !rulesLoading && (
-              <p className="mt-2 text-sm text-gray-400 dark:text-gray-500">
-                No reconciliation rules yet.{' '}
-                <button
-                  onClick={() => navigate('/app/reconciliation-rules/new')}
-                  className="text-indigo-600 dark:text-indigo-400 hover:underline"
-                >
-                  Create one →
-                </button>
-              </p>
-            )}
-          </div>
-
-          {anchorLoading ? (
-            <div className="text-gray-400 text-sm">Loading…</div>
-          ) : anchorDocs.length === 0 ? (
-            <p className="text-gray-400 dark:text-gray-500 text-sm">
-              {selectedRuleId
-                ? 'No anchor documents for this rule yet. Documents arrive via workflow.'
-                : 'Select a rule to see its anchor documents.'}
-            </p>
+          {!selectedRule ? (
+            /* Rule list */
+            <div>
+              {rulesLoading ? (
+                <div className="text-gray-400 text-sm">Loading…</div>
+              ) : rules.length === 0 ? (
+                <p className="text-sm text-gray-400 dark:text-gray-500">
+                  No reconciliation rules yet.{' '}
+                  <button onClick={() => navigate('/app/reconciliation-rules/new')} className="text-indigo-600 dark:text-indigo-400 hover:underline">
+                    Create one →
+                  </button>
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {rules.map((r) => (
+                    <li
+                      key={r.id}
+                      onClick={() => setSelectedRule(r)}
+                      className="flex items-center justify-between bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-indigo-400 dark:hover:border-indigo-500 transition"
+                    >
+                      <span className="text-sm font-medium text-gray-900 dark:text-white">{r.name}</span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); navigate(`/app/reconciliation-rules/${r.id}`); }}
+                        className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1 rounded transition"
+                        title="Edit rule"
+                      >
+                        ✎
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           ) : (
-            <ul className="space-y-2">
-              {anchorDocs.map((doc) => {
-                const status = anchorStatus(doc);
-                return (
-                  <li
-                    key={doc.anchor_document_execution_id}
-                    onClick={() => navigate(`/app/reconciliation-rules/${selectedRuleId}/anchor/${doc.anchor_document_execution_id}`)}
-                    className="flex items-center justify-between bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-indigo-400 dark:hover:border-indigo-500 transition"
-                  >
-                    <p className="text-sm font-medium text-gray-900 dark:text-white">
-                      {doc.file_name || doc.anchor_document_execution_id}
-                    </p>
-                    <StatusBadge status={status} />
-                  </li>
-                );
-              })}
-            </ul>
+            /* Anchor docs for selected rule */
+            <div>
+              <button
+                onClick={() => setSelectedRule(null)}
+                className="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 mb-4 flex items-center gap-1"
+              >
+                ← {selectedRule.name}
+              </button>
+              {anchorLoading ? (
+                <div className="text-gray-400 text-sm">Loading…</div>
+              ) : anchorDocs.length === 0 ? (
+                <p className="text-gray-400 dark:text-gray-500 text-sm">
+                  No anchor documents yet. Documents arrive via workflow.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {anchorDocs.map((doc) => {
+                    const status = anchorStatus(doc);
+                    return (
+                      <li
+                        key={doc.anchor_document_execution_id}
+                        onClick={() => navigate(`/app/reconciliation-rules/${selectedRule.id}/anchor/${doc.anchor_document_execution_id}`)}
+                        className="flex items-center justify-between bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-indigo-400 dark:hover:border-indigo-500 transition"
+                      >
+                        <p className="text-sm font-medium text-gray-900 dark:text-white">
+                          {doc.file_name || doc.anchor_document_execution_id}
+                        </p>
+                        <StatusBadge status={status} />
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
           )}
         </div>
       )}

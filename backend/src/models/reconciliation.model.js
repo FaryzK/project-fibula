@@ -30,7 +30,7 @@ module.exports = {
 
     const [targetExtractors, variations] = await Promise.all([
       db(TARGET_EXTRACTORS).where({ rule_id: id }),
-      db(VARIATIONS).where({ rule_id: id }).orderBy('created_at', 'asc'),
+      db(VARIATIONS).where({ rule_id: id }),
     ]);
 
     const variationIds = variations.map((v) => v.id);

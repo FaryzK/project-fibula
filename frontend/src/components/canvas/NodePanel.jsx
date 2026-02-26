@@ -844,24 +844,12 @@ function NodePanel({ node, onClose }) {
             )}
             {(config.recon_inputs || []).map((slot, idx) => (
               <div key={slot.id} className="flex items-center gap-2">
-                <input
-                  type="text"
-                  placeholder={`Input ${idx + 1} label`}
-                  value={slot.label}
-                  onChange={(e) => {
-                    const updated = (config.recon_inputs || []).map((s) =>
-                      s.id === slot.id ? { ...s, label: e.target.value } : s
-                    );
-                    setConfig({ ...config, recon_inputs: updated });
-                  }}
-                  onBlur={() => saveConfig(config)}
-                  className="flex-1 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-1 focus:ring-indigo-500"
-                />
                 <select
                   value={slot.extractor_id}
                   onChange={(e) => {
+                    const selected = extractorOptions.find((ex) => ex.id === e.target.value);
                     const updated = (config.recon_inputs || []).map((s) =>
-                      s.id === slot.id ? { ...s, extractor_id: e.target.value } : s
+                      s.id === slot.id ? { ...s, extractor_id: e.target.value, label: selected?.name || '', extractor_name: selected?.name || '' } : s
                     );
                     const newConfig = { ...config, recon_inputs: updated };
                     setConfig(newConfig);

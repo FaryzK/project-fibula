@@ -232,11 +232,13 @@ function ReconciliationRuleEdit() {
 
   async function handleSave(e) {
     e.preventDefault();
-    if (!name.trim() || !anchorExtractorId) return;
+    if (!name.trim() || (!isLocked && !anchorExtractorId)) return;
     setSaving(true);
     setError(null);
     try {
-      const payload = { name, auto_send_out: autoSendOut, anchor_extractor_id: anchorExtractorId, target_extractors: targetExtractors, variations };
+      const payload = isLocked
+        ? { name, auto_send_out: autoSendOut }
+        : { name, auto_send_out: autoSendOut, anchor_extractor_id: anchorExtractorId, target_extractors: targetExtractors, variations };
       if (isNew) {
         await reconciliationService.create(payload);
         navigate('/app?tab=reconciliation');
@@ -263,6 +265,9 @@ function ReconciliationRuleEdit() {
 
   if (loading) return <div className="p-8 text-gray-400 text-sm">Loading…</div>;
 
+  // Lock structural fields once matching sets exist — rewriting variations would cascade-delete them
+  const isLocked = !isNew && matchingSets.length > 0;
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-8">
       <div className="max-w-4xl mx-auto">
@@ -274,6 +279,13 @@ function ReconciliationRuleEdit() {
         </h1>
 
         <form onSubmit={handleSave} className="space-y-6">
+          {/* Lock notice */}
+          {isLocked && (
+            <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+              This rule has active matching sets. Only the rule name and send-out setting can be changed. To modify extractors or variations, delete all matching sets first.
+            </div>
+          )}
+
           {/* Basic */}
           <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 space-y-4">
             <div>
@@ -305,8 +317,9 @@ function ReconciliationRuleEdit() {
               <select
                 value={anchorExtractorId}
                 onChange={(e) => setAnchorExtractorId(e.target.value)}
-                className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                required
+                className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                required={!isLocked}
+                disabled={isLocked}
               >
                 <option value="">Select extractor…</option>
                 {extractors.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
@@ -321,19 +334,24 @@ function ReconciliationRuleEdit() {
                     <select
                       value={te.extractor_id}
                       onChange={(e) => setTargetExtractors((prev) => prev.map((x, j) => j === i ? { ...x, extractor_id: e.target.value } : x))}
-                      className="flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                      className="flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={isLocked}
                     >
                       <option value="">Select extractor…</option>
                       {extractors.filter((e) => e.id !== anchorExtractorId).map((e) => (
                         <option key={e.id} value={e.id}>{e.name}</option>
                       ))}
                     </select>
-                    <button type="button" onClick={() => setTargetExtractors((prev) => prev.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600">×</button>
+                    {!isLocked && (
+                      <button type="button" onClick={() => setTargetExtractors((prev) => prev.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600">×</button>
+                    )}
                   </div>
                 ))}
-                <button type="button" onClick={() => setTargetExtractors((prev) => [...prev, { extractor_id: '' }])} className="text-xs text-indigo-600 hover:underline">
-                  + Add target extractor
-                </button>
+                {!isLocked && (
+                  <button type="button" onClick={() => setTargetExtractors((prev) => [...prev, { extractor_id: '' }])} className="text-xs text-indigo-600 hover:underline">
+                    + Add target extractor
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -345,7 +363,9 @@ function ReconciliationRuleEdit() {
                 <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Variations</h2>
                 <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">All variations run in parallel. The anchor is fully reconciled when any one variation has all comparisons resolved.</p>
               </div>
-              <button type="button" onClick={addVariation} className="text-xs text-indigo-600 hover:underline shrink-0">+ Add variation</button>
+              {!isLocked && (
+                <button type="button" onClick={addVariation} className="text-xs text-indigo-600 hover:underline shrink-0">+ Add variation</button>
+              )}
             </div>
 
             <div className="space-y-4">
@@ -353,7 +373,9 @@ function ReconciliationRuleEdit() {
                 <div key={vi} className="border border-gray-200 dark:border-gray-600 rounded-xl p-4 space-y-5">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Variation {vi + 1}</span>
-                    <button type="button" onClick={() => setVariations((prev) => prev.filter((_, i) => i !== vi))} className="text-red-400 hover:text-red-600 text-xs">Remove</button>
+                    {!isLocked && (
+                      <button type="button" onClick={() => setVariations((prev) => prev.filter((_, i) => i !== vi))} className="text-red-400 hover:text-red-600 text-xs">Remove</button>
+                    )}
                   </div>
 
                   {/* ── Step A: Document Matching ── */}
