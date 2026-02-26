@@ -11,5 +11,6 @@ router.use(authMiddleware, dbUserMiddleware);
 router.get('/:runId', runController.getRun);
 router.get('/:runId/executions', runController.getExecutions);
 router.get('/:runId/node-statuses', runController.getNodeStatuses);
+router.get('/:runId/nodes/:nodeId/log', runController.getNodeLog);
 
 module.exports = router;

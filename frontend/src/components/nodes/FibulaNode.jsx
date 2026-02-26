@@ -114,7 +114,9 @@ function FibulaNode({ id, data, selected }) {
   const hasMultipleInputs = inputHandles.length > 1;
 
   const nodeStatuses = useCanvasStore((s) => s.nodeStatuses);
-  const runStatus = deriveNodeRunStatus(nodeStatuses[id]);
+  const statusList = nodeStatuses[id] || [];
+  const runStatus = deriveNodeRunStatus(statusList);
+  const totalDocs = statusList.reduce((sum, s) => sum + (s.count || 0), 0);
 
   return (
     <div
@@ -133,8 +135,9 @@ function FibulaNode({ id, data, selected }) {
         <div className="flex items-center justify-between">
           <span className="text-xs text-gray-400 dark:text-gray-500">{category}</span>
           {runStatus && (
-            <span className={`text-xs font-bold px-1.5 py-0.5 rounded border ${RUN_STATUS_STYLES[runStatus]}`}>
+            <span className={`text-xs font-bold px-1.5 py-0.5 rounded border flex items-center gap-1 ${RUN_STATUS_STYLES[runStatus]}`}>
               {RUN_STATUS_LABELS[runStatus]}
+              {totalDocs > 0 && <span className="font-normal opacity-80">{totalDocs}</span>}
             </span>
           )}
         </div>

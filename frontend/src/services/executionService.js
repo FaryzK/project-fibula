@@ -9,8 +9,9 @@ export default {
     });
   },
 
-  createRun(workflowId, documentIds) {
-    return api.post(`/workflows/${workflowId}/runs`, { document_ids: documentIds });
+  // payload: { document_ids } or { entries: [{ document_ids, node_id }] }
+  createRun(workflowId, payload) {
+    return api.post(`/workflows/${workflowId}/runs`, payload);
   },
 
   getRuns(workflowId) {
@@ -27,5 +28,9 @@ export default {
 
   getNodeStatuses(runId) {
     return api.get(`/runs/${runId}/node-statuses`);
+  },
+
+  getNodeLog(runId, nodeId) {
+    return api.get(`/runs/${runId}/nodes/${nodeId}/log`);
   },
 };

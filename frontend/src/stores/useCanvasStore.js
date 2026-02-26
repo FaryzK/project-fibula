@@ -141,6 +141,16 @@ const useCanvasStore = create((set, get) => ({
     }));
   },
 
+  renameNode: async (nodeId, name) => {
+    const { workflowId } = get();
+    await workflowService.updateNode(workflowId, nodeId, { name });
+    set((s) => ({
+      nodes: s.nodes.map((n) =>
+        n.id === nodeId ? { ...n, data: { ...n.data, label: name } } : n
+      ),
+    }));
+  },
+
   renameWorkflow: async (name) => {
     const { workflowId } = get();
     await workflowService.updateWorkflow(workflowId, { name });
@@ -155,19 +165,31 @@ const useCanvasStore = create((set, get) => ({
     set({ isPublished: updated.is_published });
   },
 
-  // Upload files and trigger a workflow run
-  triggerRun: async (files) => {
+  // Upload files and trigger a workflow run.
+  // entries: [{ files: FileList|File[], nodeId: string }]
+  // If a single entry has nodeId=null it uses the legacy flat document_ids path.
+  triggerRun: async (entries) => {
     const { workflowId } = get();
     set({ uploading: true, uploadError: null });
     try {
-      // Upload all files, collect document IDs
-      const uploadPromises = Array.from(files).map((f) =>
-        executionService.uploadDocument(f).then((res) => res.data.id)
+      // Upload all files for all entries in parallel, preserving nodeId association
+      const uploadedEntries = await Promise.all(
+        entries.map(async ({ files, nodeId }) => {
+          const docIds = await Promise.all(
+            Array.from(files).map((f) => executionService.uploadDocument(f).then((r) => r.data.id))
+          );
+          return { document_ids: docIds, node_id: nodeId };
+        })
       );
-      const documentIds = await Promise.all(uploadPromises);
+
+      // Build request payload
+      const allHaveNodes = uploadedEntries.every((e) => e.node_id);
+      const payload = allHaveNodes
+        ? { entries: uploadedEntries }
+        : { document_ids: uploadedEntries.flatMap((e) => e.document_ids) };
 
       // Create run
-      const { data: run } = await executionService.createRun(workflowId, documentIds);
+      const { data: run } = await executionService.createRun(workflowId, payload);
       set({ activeRunId: run.id, runStatus: 'running', nodeStatuses: {}, uploading: false });
 
       // Start polling for status
