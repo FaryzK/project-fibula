@@ -6,6 +6,8 @@ const reconciliationService = {
   getOne: (id) => api.get(`/reconciliation-rules/${id}`).then((r) => r.data),
   update: (id, payload) => api.patch(`/reconciliation-rules/${id}`, payload).then((r) => r.data),
   remove: (id) => api.delete(`/reconciliation-rules/${id}`),
+  listAllMatchingSets: (status) =>
+    api.get('/reconciliation-rules/all-matching-sets', { params: status ? { status } : {} }).then((r) => r.data),
   listMatchingSets: (id) =>
     api.get(`/reconciliation-rules/${id}/matching-sets`).then((r) => r.data),
   getMatchingSet: (ruleId, setId) =>

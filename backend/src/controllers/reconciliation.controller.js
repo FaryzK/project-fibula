@@ -68,6 +68,16 @@ module.exports = {
     }
   },
 
+  async listAllMatchingSets(req, res, next) {
+    try {
+      const { status } = req.query;
+      const sets = await reconciliationModel.findAllMatchingSets(req.dbUser.id, { status });
+      return res.json(sets);
+    } catch (err) {
+      next(err);
+    }
+  },
+
   async listMatchingSets(req, res, next) {
     try {
       const rule = await reconciliationModel.findById(req.params.id);

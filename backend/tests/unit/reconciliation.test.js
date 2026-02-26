@@ -167,6 +167,31 @@ describe('Reconciliation Rule routes', () => {
     });
   });
 
+  describe('GET /api/reconciliation-rules/all-matching-sets', () => {
+    it('returns all matching sets across rules', async () => {
+      reconciliationModel.findAllMatchingSets.mockResolvedValue([
+        { ...FAKE_MATCHING_SET, rule_name: 'PO vs Invoice' },
+      ]);
+      const res = await request(app)
+        .get('/api/reconciliation-rules/all-matching-sets')
+        .set(authHeaders());
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toHaveLength(1);
+      expect(res.body[0].rule_name).toBe('PO vs Invoice');
+    });
+
+    it('passes status filter query param', async () => {
+      reconciliationModel.findAllMatchingSets.mockResolvedValue([]);
+      await request(app)
+        .get('/api/reconciliation-rules/all-matching-sets?status=pending')
+        .set(authHeaders());
+      expect(reconciliationModel.findAllMatchingSets).toHaveBeenCalledWith(
+        'db-uuid-1',
+        { status: 'pending' }
+      );
+    });
+  });
+
   describe('GET /api/reconciliation-rules/:id/matching-sets', () => {
     it('returns matching sets for a rule', async () => {
       reconciliationModel.findById.mockResolvedValue(FAKE_RULE);

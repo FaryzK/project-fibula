@@ -8,6 +8,7 @@ router.use(authMiddleware, dbUserMiddleware);
 
 router.get('/', controller.list);
 router.post('/', controller.create);
+router.get('/all-matching-sets', controller.listAllMatchingSets);
 router.get('/:id', controller.getOne);
 router.patch('/:id', controller.update);
 router.delete('/:id', controller.remove);
