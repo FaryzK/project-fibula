@@ -9,6 +9,8 @@ const documentFolderService = {
   listDocuments: (id) => api.get(`/document-folders/${id}/documents`).then((r) => r.data),
   sendOut: (folderId, heldId) =>
     api.post(`/document-folders/${folderId}/documents/${heldId}/send-out`).then((r) => r.data),
+  deleteHeld: (folderId, heldId) =>
+    api.delete(`/document-folders/${folderId}/documents/${heldId}`),
 };
 
 export default documentFolderService;

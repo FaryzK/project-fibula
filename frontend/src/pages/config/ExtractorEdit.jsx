@@ -358,6 +358,16 @@ function ExtractorEdit() {
     }
   }
 
+  async function handleDeleteHeld(heldId) {
+    if (!window.confirm('Delete this document? This cannot be undone.')) return;
+    try {
+      await extractorService.deleteHeld(id, heldId);
+      setHeld((prev) => prev.filter((d) => d.id !== heldId));
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    }
+  }
+
   async function handleDelete() {
     if (!window.confirm('Delete this extractor?')) return;
     try {
@@ -975,12 +985,20 @@ function ExtractorEdit() {
                           <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{doc.file_name}</p>
                           <HeldReasonBadge reason={doc.held_reason} />
                         </div>
-                        <button
-                          onClick={() => handleSendOut(doc.id)}
-                          className="shrink-0 text-xs px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition ml-3"
-                        >
-                          Send out
-                        </button>
+                        <div className="flex gap-2 shrink-0 ml-3">
+                          <button
+                            onClick={() => handleSendOut(doc.id)}
+                            className="text-xs px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition"
+                          >
+                            Send out
+                          </button>
+                          <button
+                            onClick={() => handleDeleteHeld(doc.id)}
+                            className="text-xs px-2 py-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-800 transition"
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </div>
                       <p className="text-xs text-gray-400 dark:text-gray-500 mb-2">
                         Held at {new Date(doc.held_at).toLocaleString()}

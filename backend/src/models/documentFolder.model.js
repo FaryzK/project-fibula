@@ -91,6 +91,10 @@ module.exports = {
     return row;
   },
 
+  async deleteHeld(heldId) {
+    return db(HELD).where({ id: heldId }).delete();
+  },
+
   async findUsage(folderId) {
     return db(NODES)
       .join(WORKFLOWS, `${NODES}.workflow_id`, `${WORKFLOWS}.id`)

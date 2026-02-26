@@ -642,6 +642,14 @@ function NodePanel({ node, onClose }) {
                 Create a splitting instruction →
               </button>
             )}
+            {config.splitting_instruction_id && (
+              <button
+                onClick={() => navigate(`/app/splitting/${config.splitting_instruction_id}`)}
+                className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 hover:underline block"
+              >
+                Edit instruction →
+              </button>
+            )}
           </div>
         )}
 
@@ -684,6 +692,14 @@ function NodePanel({ node, onClose }) {
                 Create a categorisation prompt →
               </button>
             )}
+            {config.categorisation_prompt_id && (
+              <button
+                onClick={() => navigate(`/app/categorisation/${config.categorisation_prompt_id}`)}
+                className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 hover:underline block"
+              >
+                Edit prompt →
+              </button>
+            )}
           </div>
         )}
 
@@ -712,6 +728,14 @@ function NodePanel({ node, onClose }) {
                 className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
               >
                 Create a document folder →
+              </button>
+            )}
+            {config.folder_instance_id && (
+              <button
+                onClick={() => navigate(`/app/document-folders/${config.folder_instance_id}`)}
+                className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 hover:underline block"
+              >
+                Open folder →
               </button>
             )}
             <p className="mt-2 text-xs text-gray-400">
@@ -843,12 +867,20 @@ function NodePanel({ node, onClose }) {
                 </button>
               )}
               {config.reconciliation_rule_id && (
-                <button
-                  onClick={() => navigate(`/app/reconciliation-rules/${config.reconciliation_rule_id}`)}
-                  className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 hover:underline block"
-                >
-                  Edit rule →
-                </button>
+                <div className="mt-2 flex gap-3">
+                  <button
+                    onClick={() => navigate(`/app/reconciliation-rules/${config.reconciliation_rule_id}`)}
+                    className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+                  >
+                    Edit rule →
+                  </button>
+                  <button
+                    onClick={() => navigate(`/app/reconciliation-rules/${config.reconciliation_rule_id}?tab=matchingSets`)}
+                    className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+                  >
+                    View matching sets →
+                  </button>
+                </div>
               )}
             </div>
             {config.reconciliation_inputs?.length > 0 && (
