@@ -1,4 +1,5 @@
 const workflowRunModel = require('../models/workflowRun.model');
+const workflowModel = require('../models/workflow.model');
 const documentExecutionModel = require('../models/documentExecution.model');
 const documentModel = require('../models/document.model');
 const nodeModel = require('../models/node.model');
@@ -15,6 +16,16 @@ const dataMapperService = require('./dataMapper.service');
 const reconciliationService = require('./reconciliation.service');
 const { evaluateConditions, applyAssignments, resolveValue } = require('../utils/expression');
 const axios = require('axios');
+
+/**
+ * Safe metadata parser — handles both raw JSON strings (TEXT column) and
+ * already-parsed objects (JSONB column auto-parsed by the Postgres driver).
+ */
+function parseMeta(raw) {
+  if (!raw) return {};
+  if (typeof raw === 'object') return raw;
+  return JSON.parse(raw);
+}
 
 /**
  * Build an adjacency map: { sourceNodeId: [{ targetNodeId, sourcePort, targetPort }] }
@@ -256,15 +267,29 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
   const nodeMap = Object.fromEntries(nodes.map((n) => [n.id, n]));
 
   let workflowId = null;
+  let workflowUserId = null;
   try {
     const run = await workflowRunModel.findById(workflowRunId);
     workflowId = run ? run.workflow_id : null;
+    if (workflowId) {
+      const wf = await workflowModel.findById(workflowId);
+      workflowUserId = wf ? wf.user_id : null;
+    }
   } catch (_) { /* pass */ }
 
-  const initialMetadata = JSON.parse(docExecution.metadata || '{}');
+  const initialMetadata = { ...parseMeta(docExecution.metadata) };
+  // Seed document_id from the execution row so SPLITTING/EXTRACTOR can read it
+  if (docExecution.document_id && !initialMetadata.document_id) {
+    initialMetadata.document_id = docExecution.document_id;
+  }
+
+  const entryNodes = docExecution.start_node_id
+    ? [{ id: docExecution.start_node_id }]
+    : findEntryNodes(nodes, edges);
+
   const queue = startQueue
     ? startQueue.map((item) => ({ ...item }))
-    : findEntryNodes(nodes, edges).map((n) => ({ nodeId: n.id, metadata: initialMetadata }));
+    : entryNodes.map((n) => ({ nodeId: n.id, metadata: initialMetadata }));
 
   while (queue.length > 0) {
     const { nodeId, metadata } = queue.shift();
@@ -320,7 +345,7 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
 
       for (const subDoc of result.subDocuments) {
         const newDoc = await documentModel.create({
-          userId: null,
+          userId: workflowUserId,
           fileName: subDoc.file_name,
           fileUrl: subDoc.file_url,
           fileType: subDoc.file_type,
@@ -355,7 +380,7 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
       for (const otherId of setDocExecIds) {
         const otherExec = await documentExecutionModel.findById(otherId);
         if (otherExec && otherExec.status === 'held') {
-          const otherMeta = JSON.parse(otherExec.metadata || '{}');
+          const otherMeta = parseMeta(otherExec.metadata);
           const startQ = nextEdges.map((e) => ({ nodeId: e.targetNodeId, metadata: otherMeta }));
           pendingExecQueue.push({ docExecution: otherExec, startQueue: startQ });
         }
@@ -414,7 +439,7 @@ async function resumeDocumentExecution(docExecutionId, fromNodeId, workflowRunId
   ]);
 
   const graph = buildGraph(edges);
-  const meta = JSON.parse(docExec.metadata || '{}');
+  const meta = parseMeta(docExec.metadata);
 
   const startQueue = (graph[fromNodeId] || []).map((e) => ({
     nodeId: e.targetNodeId,

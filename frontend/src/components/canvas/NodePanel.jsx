@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import executionService from '../../services/executionService';
 import splittingService from '../../services/splittingService';
 import categorisationService from '../../services/categorisationService';
 import documentFolderService from '../../services/documentFolderService';
@@ -461,11 +462,38 @@ function WebhookConfig({ config, onChange, nodeId }) {
   );
 }
 
+// ─── Last-run IO block ───────────────────────────────────────────────────────
+
+function MetaBlock({ label, data }) {
+  let parsed = data;
+  if (typeof data === 'string') {
+    try { parsed = JSON.parse(data); } catch (_) { parsed = {}; }
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const entries = Object.entries(parsed).filter(([k]) => !k.startsWith('_'));
+  if (entries.length === 0) return null;
+  return (
+    <div>
+      <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">{label}</p>
+      <div className="bg-gray-50 dark:bg-gray-700/40 rounded p-2 space-y-0.5 max-h-40 overflow-y-auto">
+        {entries.map(([k, v]) => (
+          <div key={k} className="flex gap-2 text-xs">
+            <span className="font-mono text-gray-500 dark:text-gray-400 flex-shrink-0">{k}:</span>
+            <span className="font-mono text-gray-900 dark:text-white break-all">
+              {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main NodePanel ──────────────────────────────────────────────────────────
 
 function NodePanel({ node, onClose }) {
   const navigate = useNavigate();
-  const { workflowId, deleteNode } = useCanvasStore();
+  const { workflowId, deleteNode, renameNode, activeRunId } = useCanvasStore();
   const nodeType = node.data.nodeType;
 
   const [splittingOptions, setSplittingOptions] = useState([]);
@@ -476,6 +504,10 @@ function NodePanel({ node, onClose }) {
   const [reconciliationOptions, setReconciliationOptions] = useState([]);
   const [config, setConfig] = useState(node.data.config || {});
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+  const [nodeName, setNodeName] = useState(node.data.label);
+  const [renamingNode, setRenamingNode] = useState(false);
+  const [nodeLog, setNodeLog] = useState(null);
 
   useEffect(() => {
     if (nodeType === 'SPLITTING') splittingService.getAll().then(({ data }) => setSplittingOptions(data));
@@ -486,8 +518,16 @@ function NodePanel({ node, onClose }) {
     if (nodeType === 'RECONCILIATION') reconciliationService.list().then((data) => setReconciliationOptions(data));
   }, [nodeType]);
 
+  useEffect(() => {
+    if (!activeRunId) { setNodeLog(null); return; }
+    executionService.getNodeLog(activeRunId, node.id)
+      .then(({ data }) => setNodeLog(data))
+      .catch(() => setNodeLog(null));
+  }, [activeRunId, node.id]);
+
   async function saveConfig(newConfig) {
     setSaving(true);
+    setSaveError(null);
     try {
       await workflowService.updateNode(workflowId, node.id, { config: newConfig });
       useCanvasStore.setState((s) => ({
@@ -495,8 +535,21 @@ function NodePanel({ node, onClose }) {
           n.id === node.id ? { ...n, data: { ...n.data, config: newConfig } } : n
         ),
       }));
+    } catch (err) {
+      setSaveError(err?.response?.data?.error || err.message || 'Failed to save');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function commitRename() {
+    setRenamingNode(false);
+    const trimmed = nodeName.trim();
+    if (!trimmed || trimmed === node.data.label) return;
+    try {
+      await renameNode(node.id, trimmed);
+    } catch (err) {
+      setSaveError(err?.response?.data?.error || err.message || 'Failed to rename');
     }
   }
 
@@ -523,11 +576,28 @@ function NodePanel({ node, onClose }) {
     <div className="w-80 bg-white dark:bg-gray-800 border-l border-gray-200 dark:border-gray-700 flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700">
-        <div>
+        <div className="flex-1 min-w-0 mr-2">
           <p className="text-xs text-gray-400 dark:text-gray-500">{nodeType}</p>
-          <p className="text-sm font-semibold text-gray-900 dark:text-white">{node.data.label}</p>
+          {renamingNode ? (
+            <input
+              autoFocus
+              value={nodeName}
+              onChange={(e) => setNodeName(e.target.value)}
+              onBlur={commitRename}
+              onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') { setNodeName(node.data.label); setRenamingNode(false); } }}
+              className="text-sm font-semibold text-gray-900 dark:text-white bg-transparent border-b border-indigo-500 outline-none w-full"
+            />
+          ) : (
+            <button
+              onClick={() => setRenamingNode(true)}
+              className="text-sm font-semibold text-gray-900 dark:text-white hover:text-indigo-600 dark:hover:text-indigo-400 transition truncate block w-full text-left"
+              title="Click to rename"
+            >
+              {nodeName}
+            </button>
+          )}
         </div>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 dark:hover:text-white text-xl leading-none">×</button>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 dark:hover:text-white text-xl leading-none flex-shrink-0">×</button>
       </div>
 
       {/* Config body */}
@@ -805,28 +875,51 @@ function NodePanel({ node, onClose }) {
             No configuration for this node type yet.
           </p>
         )}
+
+        {/* Last run IO */}
+        {nodeLog && (
+          <div className="border-t border-gray-100 dark:border-gray-700 pt-3 space-y-2">
+            <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+              Last run · <span className={
+                nodeLog.status === 'completed' ? 'text-green-600' :
+                nodeLog.status === 'failed'    ? 'text-red-500' :
+                nodeLog.status === 'held'      ? 'text-orange-500' : 'text-amber-500'
+              }>{nodeLog.status}</span>
+            </p>
+            {nodeLog.error && (
+              <p className="text-xs text-red-500 font-mono break-all">{nodeLog.error}</p>
+            )}
+            <MetaBlock label="Input" data={nodeLog.input_metadata} />
+            <MetaBlock label="Output" data={nodeLog.output_metadata} />
+          </div>
+        )}
       </div>
 
       {/* Footer */}
-      <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
-        <button
-          onClick={handleDelete}
-          className="text-xs text-red-400 hover:text-red-600 transition"
-        >
-          Delete node
-        </button>
-        {needsSaveButton && (
+      <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 space-y-2">
+        {saveError && (
+          <p className="text-xs text-red-500 dark:text-red-400">{saveError}</p>
+        )}
+        <div className="flex items-center justify-between">
           <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition disabled:opacity-50"
+            onClick={handleDelete}
+            className="text-xs text-red-400 hover:text-red-600 transition"
           >
-            {saving ? 'Saving…' : 'Save'}
+            Delete node
           </button>
-        )}
-        {!needsSaveButton && saving && (
-          <span className="text-xs text-gray-400">Saving…</span>
-        )}
+          {needsSaveButton && (
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          )}
+          {!needsSaveButton && saving && (
+            <span className="text-xs text-gray-400">Saving…</span>
+          )}
+        </div>
       </div>
     </div>
   );

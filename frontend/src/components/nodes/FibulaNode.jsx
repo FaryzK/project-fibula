@@ -80,6 +80,30 @@ const RUN_STATUS_LABELS = {
   held:       '⏸',
 };
 
+/**
+ * Pixel offset of the center of port row i, measured from the top of the node.
+ *
+ * Breakdown:
+ *   4px  accent bar (h-1)
+ *   8px  pt-2 of body wrapper
+ *  16px  text-xs category badge (line-height: 1rem in Tailwind)
+ *   2px  mt-0.5
+ *  20px  text-sm node name (line-height: 1.25rem)
+ *   8px  mt-2 before port section
+ *   6px  pt-1.5 of port section
+ *  12px  half of h-6 row (24px) → centre of row 0
+ * ──────
+ *  76px  FIRST_PORT_CENTER
+ *
+ * Each subsequent row: 24px row height + 4px space-y-1 gap = 28px step.
+ */
+const FIRST_PORT_CENTER_PX = 76;
+const PORT_STEP_PX = 28; // h-6 (24) + space-y-1 gap (4)
+
+function portTop(i) {
+  return `${FIRST_PORT_CENTER_PX + i * PORT_STEP_PX}px`;
+}
+
 function FibulaNode({ id, data, selected }) {
   const category = NODE_CATEGORIES[data.nodeType] || 'Execution';
   const accent = CATEGORY_COLORS[category];
@@ -90,7 +114,9 @@ function FibulaNode({ id, data, selected }) {
   const hasMultipleInputs = inputHandles.length > 1;
 
   const nodeStatuses = useCanvasStore((s) => s.nodeStatuses);
-  const runStatus = deriveNodeRunStatus(nodeStatuses[id]);
+  const statusList = nodeStatuses[id] || [];
+  const runStatus = deriveNodeRunStatus(statusList);
+  const totalDocs = statusList.reduce((sum, s) => sum + (s.count || 0), 0);
 
   return (
     <div
@@ -109,8 +135,9 @@ function FibulaNode({ id, data, selected }) {
         <div className="flex items-center justify-between">
           <span className="text-xs text-gray-400 dark:text-gray-500">{category}</span>
           {runStatus && (
-            <span className={`text-xs font-bold px-1.5 py-0.5 rounded border ${RUN_STATUS_STYLES[runStatus]}`}>
+            <span className={`text-xs font-bold px-1.5 py-0.5 rounded border flex items-center gap-1 ${RUN_STATUS_STYLES[runStatus]}`}>
               {RUN_STATUS_LABELS[runStatus]}
+              {totalDocs > 0 && <span className="font-normal opacity-80">{totalDocs}</span>}
             </span>
           )}
         </div>
@@ -120,51 +147,49 @@ function FibulaNode({ id, data, selected }) {
           {data.label}
         </p>
 
-        {/* Input port labels for multi-input nodes (e.g. RECONCILIATION) */}
+        {/* Multi-input port labels (left side) — one h-6 row per port */}
         {hasMultipleInputs && (
           <div className="mt-2 border-t border-gray-100 dark:border-gray-700 pt-1.5 space-y-1">
             {inputHandles.map((h) => (
-              <div key={h.id} className="flex items-center gap-1.5">
-                <div className="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500 shrink-0" />
-                <span className="text-xs text-gray-400 dark:text-gray-500">{h.label}</span>
+              <div key={h.id} className="flex items-center h-6 pl-1">
+                <span className="text-xs text-gray-400 dark:text-gray-500 leading-none">{h.label}</span>
               </div>
             ))}
           </div>
         )}
 
-        {/* Output port labels for multi-handle nodes */}
+        {/* Multi-output port labels (right side) — one h-6 row per port */}
         {hasMultipleOutputs && (
           <div className="mt-2 border-t border-gray-100 dark:border-gray-700 pt-1.5 space-y-1">
             {outputHandles.map((h) => (
-              <div key={h.id} className="flex items-center justify-end gap-1.5">
-                <span className="text-xs text-gray-400 dark:text-gray-500">{h.label}</span>
-                <div className="w-2 h-2 rounded-full bg-indigo-400 dark:bg-indigo-500 shrink-0" />
+              <div key={h.id} className="flex items-center justify-end h-6 pr-3">
+                <span className="text-xs text-gray-400 dark:text-gray-500 leading-none">{h.label}</span>
               </div>
             ))}
           </div>
         )}
       </div>
 
-      {/* Input handles (left) — labeled if multiple (e.g. RECONCILIATION) */}
+      {/* Input handles (left) */}
       {inputHandles.map((h, i) => (
         <Handle
           key={h.id}
           id={h.id}
           type="target"
           position={Position.Left}
-          style={hasMultipleInputs ? { top: `${((i + 1) / (inputHandles.length + 1)) * 100}%` } : undefined}
+          style={hasMultipleInputs ? { top: portTop(i) } : undefined}
           className="!w-3 !h-3 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-800"
         />
       ))}
 
-      {/* Output handles (right) — one per port, evenly distributed vertically */}
+      {/* Output handles (right) */}
       {outputHandles.map((h, i) => (
         <Handle
           key={h.id}
           id={h.id}
           type="source"
           position={Position.Right}
-          style={{ top: `${((i + 1) / (outputHandles.length + 1)) * 100}%` }}
+          style={hasMultipleOutputs ? { top: portTop(i) } : undefined}
           className="!w-3 !h-3 !bg-indigo-500 !border-2 !border-white dark:!border-gray-800"
         />
       ))}

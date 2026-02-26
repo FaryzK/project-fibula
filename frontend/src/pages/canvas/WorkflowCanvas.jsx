@@ -14,6 +14,7 @@ import useCanvasStore from '../../stores/useCanvasStore';
 import nodeTypes from '../../utils/nodeTypes';
 import NodePalette from '../../components/canvas/NodePalette';
 import NodePanel from '../../components/canvas/NodePanel';
+import RunModal from '../../components/canvas/RunModal';
 
 const RUN_STATUS_BANNER = {
   running:   { bg: 'bg-amber-50 border-amber-200 text-amber-800', label: '⟳ Running…' },
@@ -32,14 +33,24 @@ function CanvasInner() {
   const [titleValue, setTitleValue] = useState('');
   const [pendingConnection, setPendingConnection] = useState(null); // { fromNodeId, fromHandleId, fromHandleType, position }
   const connectingNodeRef = useRef(null);
-  const fileInputRef = useRef(null);
+  const [runModalOpen, setRunModalOpen] = useState(false);
 
   const {
     workflowName, isPublished, nodes, edges, loading,
     loadWorkflow, onNodesChange, onEdgesChange, onNodeDragStop,
     onConnect, addNode, deleteEdge, deleteNode, renameWorkflow, togglePublish,
-    triggerRun, clearRun, runStatus, uploading, uploadError,
+    triggerRun, clearRun, runStatus, uploading, uploadError, nodeStatuses,
   } = useCanvasStore();
+
+  // Colour edges green (animated) when the source node has completed documents
+  const styledEdges = edges.map((edge) => {
+    const srcStatuses = nodeStatuses[edge.source] || [];
+    const hasCompleted = srcStatuses.some((s) => s.status === 'completed' && s.count > 0);
+    if (hasCompleted) {
+      return { ...edge, style: { stroke: '#22c55e', strokeWidth: 2 }, animated: true };
+    }
+    return edge;
+  });
 
   useEffect(() => {
     loadWorkflow(workflowId);
@@ -138,12 +149,9 @@ function CanvasInner() {
     setRenamingTitle(false);
   }
 
-  function handleFileChange(e) {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      triggerRun(files);
-      e.target.value = '';
-    }
+  function handleRunModalSubmit(entries) {
+    triggerRun(entries);
+    setRunModalOpen(false);
   }
 
   if (loading) {
@@ -157,6 +165,7 @@ function CanvasInner() {
   const banner = runStatus ? RUN_STATUS_BANNER[runStatus] : null;
 
   return (
+    <>
     <div className="flex flex-col h-screen bg-gray-100 dark:bg-gray-900" onKeyDown={handleKeyDown} tabIndex={-1}>
       {/* Toolbar */}
       <div className="flex items-center justify-between bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 py-2 z-10">
@@ -187,20 +196,12 @@ function CanvasInner() {
         </div>
 
         <div className="flex items-center gap-3">
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif"
-            className="hidden"
-            onChange={handleFileChange}
-          />
           <button
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => setRunModalOpen(true)}
             disabled={uploading || runStatus === 'running'}
             className="text-sm px-3 py-1 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-md font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {uploading ? 'Uploading…' : '↑ Upload & Run'}
+            {uploading ? 'Uploading…' : '▶ Run'}
           </button>
 
           <span
@@ -247,7 +248,7 @@ function CanvasInner() {
         <div className="flex-1" onDragOver={handleDragOver} onDrop={handleDrop}>
           <ReactFlow
             nodes={nodes}
-            edges={edges}
+            edges={styledEdges}
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
@@ -268,6 +269,7 @@ function CanvasInner() {
 
         {selectedNode && (
           <NodePanel
+            key={selectedNode.id}
             node={selectedNode}
             onClose={() => setSelectedNode(null)}
           />
@@ -282,6 +284,16 @@ function CanvasInner() {
         )}
       </div>
     </div>
+
+    {runModalOpen && (
+      <RunModal
+        nodes={nodes}
+        onRun={handleRunModalSubmit}
+        onClose={() => setRunModalOpen(false)}
+        uploading={uploading}
+      />
+    )}
+    </>
   );
 }
 

@@ -16,13 +16,19 @@ module.exports = {
     return row;
   },
 
-  async createMany(workflowRunId, documentIds) {
-    const rows = documentIds.map((docId) => ({
-      workflow_run_id: workflowRunId,
-      document_id: docId,
-      status: 'pending',
-      metadata: JSON.stringify({}),
-    }));
+  // entries: [{ docId, startNodeId? }] — or legacy: plain string array
+  async createMany(workflowRunId, entries) {
+    const rows = entries.map((entry) => {
+      const docId = typeof entry === 'string' ? entry : entry.docId;
+      const startNodeId = typeof entry === 'string' ? null : (entry.startNodeId || null);
+      return {
+        workflow_run_id: workflowRunId,
+        document_id: docId,
+        start_node_id: startNodeId,
+        status: 'pending',
+        metadata: JSON.stringify({}),
+      };
+    });
     return db(TABLE).insert(rows).returning('*');
   },
 
@@ -76,5 +82,16 @@ module.exports = {
     if (['completed', 'failed', 'held'].includes(status)) update.completed_at = db.fn.now();
     const [row] = await db(LOG_TABLE).where({ id: logId }).update(update).returning('*');
     return row;
+  },
+
+  // Latest log entry for a given node in a given run (for IO visibility)
+  async getLatestNodeLog(workflowRunId, nodeId) {
+    return db(LOG_TABLE)
+      .join(TABLE, `${LOG_TABLE}.document_execution_id`, `${TABLE}.id`)
+      .where(`${TABLE}.workflow_run_id`, workflowRunId)
+      .where(`${LOG_TABLE}.node_id`, nodeId)
+      .orderBy(`${LOG_TABLE}.created_at`, 'desc')
+      .select(`${LOG_TABLE}.*`)
+      .first();
   },
 };
