@@ -1,5 +1,6 @@
 import { Handle, Position } from '@xyflow/react';
 import useCanvasStore from '../../stores/useCanvasStore';
+import useExtractorStore from '../../stores/useExtractorStore';
 
 const CATEGORY_COLORS = {
   Trigger:   'bg-blue-500',
@@ -25,10 +26,13 @@ const NODE_CATEGORIES = {
 };
 
 /** Build the list of input port handles for a node */
-function getInputHandles(nodeType, config) {
+function getInputHandles(nodeType, config, extractorMap) {
   if (nodeType === 'RECONCILIATION') {
     const slots = config?.recon_inputs || [];
-    if (slots.length > 0) return slots.map((s) => ({ id: s.id, label: s.label || s.id }));
+    if (slots.length > 0) return slots.map((s, i) => ({
+      id: s.id,
+      label: s.label || s.extractor_name || extractorMap[s.extractor_id] || `Input ${i + 1}`,
+    }));
     return [{ id: 'default', label: '' }];
   }
   return [{ id: 'default', label: '' }];
@@ -39,7 +43,8 @@ function getOutputHandles(nodeType, config) {
   switch (nodeType) {
     case 'RECONCILIATION': {
       const slots = config?.recon_inputs || [];
-      if (slots.length > 0) return slots.map((s) => ({ id: s.id, label: s.label || s.id }));
+      // Labels are shown via the input section; output handles carry no label to avoid duplication
+      if (slots.length > 0) return slots.map((s) => ({ id: s.id, label: '' }));
       return [{ id: 'default', label: '' }];
     }
     case 'IF':
@@ -113,8 +118,10 @@ function FibulaNode({ id, data, selected }) {
   const category = NODE_CATEGORIES[data.nodeType] || 'Execution';
   const accent = CATEGORY_COLORS[category];
   const config = data.config || {};
+  const extractors = useExtractorStore((s) => s.extractors);
+  const extractorMap = Object.fromEntries(extractors.map((e) => [e.id, e.name]));
   const outputHandles = getOutputHandles(data.nodeType, config);
-  const inputHandles = getInputHandles(data.nodeType, config);
+  const inputHandles = getInputHandles(data.nodeType, config, extractorMap);
   const hasMultipleOutputs = outputHandles.length > 1;
   const hasMultipleInputs = inputHandles.length > 1;
 
@@ -164,7 +171,8 @@ function FibulaNode({ id, data, selected }) {
         )}
 
         {/* Multi-output port labels (right side) — one h-6 row per port */}
-        {hasMultipleOutputs && (
+        {/* RECONCILIATION skipped: input labels already cover both sides (same slots) */}
+        {hasMultipleOutputs && data.nodeType !== 'RECONCILIATION' && (
           <div className="mt-2 border-t border-gray-100 dark:border-gray-700 pt-1.5 space-y-1">
             {outputHandles.map((h) => (
               <div key={h.id} className="flex items-center justify-end h-6 pr-3">
