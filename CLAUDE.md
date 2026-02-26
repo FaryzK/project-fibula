@@ -49,6 +49,7 @@ All feature specs live in `/requirements/`. **Always read the relevant file befo
 - Create a feature branch for each phase or feature: `feat/phase-2-auth`, `feat/phase-3-canvas`, etc.
 - Open a PR and merge into main when the phase is complete and tests pass
 - Never commit directly to main
+- After pushing or merging a phase branch, update the phase status table in `MEMORY.md`
 
 ## Commit Message Convention (Conventional Commits)
 Format: `<type>: <short description>`

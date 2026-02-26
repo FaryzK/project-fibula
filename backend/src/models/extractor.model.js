@@ -21,7 +21,7 @@ module.exports = {
     if (!extractor) return null;
     const [headerFields, tableTypes] = await Promise.all([
       db(HEADER_FIELDS).where({ extractor_id: id }).orderBy('sort_order', 'asc'),
-      db(TABLE_TYPES).where({ extractor_id: id }).orderBy('created_at', 'asc'),
+      db(TABLE_TYPES).where({ extractor_id: id }),
     ]);
     const tableTypeIds = tableTypes.map((t) => t.id);
     const columns = tableTypeIds.length
