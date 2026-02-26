@@ -110,7 +110,7 @@ async function runExtraction(fileBuffer, fileType, systemPrompt) {
         role: 'user',
         content: [
           contentItem,
-          { type: 'input_text', text: 'Extract data according to the schema.' },
+          { type: 'input_text', text: 'Extract data according to the schema and return valid JSON.' },
         ],
       },
     ],
