@@ -9,6 +9,8 @@ const extractorService = {
   listHeld: (id) => api.get(`/extractors/${id}/held`).then((r) => r.data),
   sendOut: (extractorId, heldId) =>
     api.post(`/extractors/${extractorId}/held/${heldId}/send-out`).then((r) => r.data),
+  deleteHeld: (extractorId, heldId) =>
+    api.delete(`/extractors/${extractorId}/held/${heldId}`),
   listFeedback: (id) => api.get(`/extractors/${id}/feedback`).then((r) => r.data),
   createFeedback: (id, payload) =>
     api.post(`/extractors/${id}/feedback`, payload).then((r) => r.data),

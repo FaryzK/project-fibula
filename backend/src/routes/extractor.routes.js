@@ -15,6 +15,7 @@ router.patch('/:id', controller.update);
 router.delete('/:id', controller.remove);
 router.get('/:id/held', controller.listHeld);
 router.post('/:id/held/:heldId/send-out', controller.sendOut);
+router.delete('/:id/held/:heldId', controller.deleteHeld);
 router.post('/:id/test-extract', upload.single('file'), controller.testExtract);
 router.get('/:id/feedback', controller.listFeedback);
 router.post('/:id/feedback', controller.createFeedback);

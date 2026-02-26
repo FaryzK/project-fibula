@@ -60,6 +60,16 @@ function DocumentFolderEdit() {
     }
   }
 
+  async function handleDeleteHeld(heldId) {
+    if (!window.confirm('Delete this document? This cannot be undone.')) return;
+    try {
+      await documentFolderService.deleteHeld(id, heldId);
+      setHeldDocs((prev) => prev.filter((d) => d.id !== heldId));
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    }
+  }
+
   async function handleDelete() {
     if (!window.confirm('Delete this folder?')) return;
     try {
@@ -158,12 +168,20 @@ function DocumentFolderEdit() {
                         {doc.workflow_name} · {doc.node_name} · {new Date(doc.arrived_at).toLocaleString()}
                       </p>
                     </div>
-                    <button
-                      onClick={() => handleSendOut(doc.id)}
-                      className="text-xs px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition"
-                    >
-                      Send out
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleSendOut(doc.id)}
+                        className="text-xs px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition"
+                      >
+                        Send out
+                      </button>
+                      <button
+                        onClick={() => handleDeleteHeld(doc.id)}
+                        className="text-xs px-2 py-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-800 transition"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>

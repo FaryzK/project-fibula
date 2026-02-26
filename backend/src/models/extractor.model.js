@@ -193,6 +193,10 @@ module.exports = {
     return row;
   },
 
+  async deleteHeld(heldId, extractorId) {
+    return db(HELD).where({ id: heldId, extractor_id: extractorId }).delete();
+  },
+
   async findFeedback(extractorId) {
     return db(FEEDBACK)
       .leftJoin(DOCUMENTS, `${FEEDBACK}.document_id`, `${DOCUMENTS}.id`)

@@ -22,4 +22,8 @@ module.exports = {
   async findByUserId(userId) {
     return db(TABLE).where({ user_id: userId }).orderBy('created_at', 'desc');
   },
+
+  async remove(id) {
+    return db(TABLE).where({ id }).delete();
+  },
 };

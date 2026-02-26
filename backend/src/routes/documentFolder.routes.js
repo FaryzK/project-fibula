@@ -13,5 +13,6 @@ router.patch('/:id', controller.update);
 router.delete('/:id', controller.remove);
 router.get('/:id/documents', controller.listDocuments);
 router.post('/:id/documents/:heldId/send-out', controller.sendOut);
+router.delete('/:id/documents/:heldId', controller.deleteHeldDoc);
 
 module.exports = router;
