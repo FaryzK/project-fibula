@@ -153,9 +153,11 @@ async function processNode(node, metadata, workflowRunId, docExecutionId, workfl
         _extractor_name: extractor.name,
       };
 
-      const shouldHold = extractor.hold_all || extractorService.hasMissingMandatory(extractor, extracted);
+      const isMissingMandatory = extractorService.hasMissingMandatory(extractor, extracted);
+      const shouldHold = extractor.hold_all || isMissingMandatory;
       if (shouldHold) {
-        await extractorModel.createHeld({ extractorId: extractor.id, documentExecutionId: docExecutionId });
+        const heldReason = extractor.hold_all ? 'hold_all' : 'missing_mandatory';
+        await extractorModel.createHeld({ extractorId: extractor.id, documentExecutionId: docExecutionId, heldReason });
         await documentExecutionModel.updateStatus(docExecutionId, { metadata: enrichedMetadata });
         return { type: 'hold' };
       }

@@ -1,8 +1,10 @@
 const extractorModel = require('../models/extractor.model');
+const documentModel = require('../models/document.model');
 const documentExecutionModel = require('../models/documentExecution.model');
 const workflowRunModel = require('../models/workflowRun.model');
 const { resumeDocumentExecution } = require('../services/execution.service');
 const { testExtractFromBuffer, generateEmbedding } = require('../services/extractor.service');
+const storageService = require('../services/storage.service');
 
 module.exports = {
   async list(req, res, next) {
@@ -123,8 +125,24 @@ module.exports = {
       if (!extractor) return res.status(404).json({ error: 'Not found' });
       if (extractor.user_id !== req.dbUser.id) return res.status(403).json({ error: 'Forbidden' });
 
+      // Upload file to storage and create a documents record so feedback can reference it.
+      // Non-fatal: if storage is not configured, extraction still proceeds without a document_id.
+      let docMeta = {};
+      try {
+        const { url } = await storageService.upload(req.file.buffer, req.file.originalname, req.file.mimetype);
+        const doc = await documentModel.create({
+          userId: req.dbUser.id,
+          fileName: req.file.originalname,
+          fileUrl: url,
+          fileType: req.file.mimetype,
+        });
+        docMeta = { document_id: doc.id, document_file_url: url, document_file_name: doc.file_name };
+      } catch (uploadErr) {
+        console.warn('Test extract: storage upload skipped —', uploadErr.message);
+      }
+
       const result = await testExtractFromBuffer(req.file.buffer, req.file.mimetype, extractor);
-      return res.json(result);
+      return res.json({ ...result, ...docMeta });
     } catch (err) {
       next(err);
     }
@@ -155,6 +173,17 @@ module.exports = {
         imageEmbedding,
       });
       return res.status(201).json(feedback);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async deleteFeedback(req, res, next) {
+    try {
+      const extractor = await extractorModel.findById(req.params.id);
+      if (!extractor || extractor.user_id !== req.dbUser.id) return res.status(404).json({ error: 'Not found' });
+      await extractorModel.deleteFeedback(req.params.feedbackId, req.params.id);
+      return res.status(204).end();
     } catch (err) {
       next(err);
     }

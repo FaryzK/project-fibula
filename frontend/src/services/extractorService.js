@@ -12,6 +12,8 @@ const extractorService = {
   listFeedback: (id) => api.get(`/extractors/${id}/feedback`).then((r) => r.data),
   createFeedback: (id, payload) =>
     api.post(`/extractors/${id}/feedback`, payload).then((r) => r.data),
+  deleteFeedback: (extractorId, feedbackId) =>
+    api.delete(`/extractors/${extractorId}/feedback/${feedbackId}`),
   testExtract: (extractorId, file) => {
     const form = new FormData();
     form.append('file', file);

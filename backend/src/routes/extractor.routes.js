@@ -18,5 +18,6 @@ router.post('/:id/held/:heldId/send-out', controller.sendOut);
 router.post('/:id/test-extract', upload.single('file'), controller.testExtract);
 router.get('/:id/feedback', controller.listFeedback);
 router.post('/:id/feedback', controller.createFeedback);
+router.delete('/:id/feedback/:feedbackId', controller.deleteFeedback);
 
 module.exports = router;

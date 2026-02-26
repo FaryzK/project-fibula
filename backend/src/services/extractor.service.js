@@ -17,6 +17,7 @@ async function generateEmbedding(text) {
     const response = await openai.embeddings.create({
       model: 'text-embedding-3-small',
       input: text,
+      dimensions: 1536,
     });
     return response.data[0].embedding;
   } catch (err) {
@@ -163,7 +164,11 @@ async function testExtractFromBuffer(fileBuffer, fileType, extractor) {
   return {
     header: parsed.header || {},
     tables: parsed.tables || {},
-    feedback_used: feedback.map((fb) => fb.feedback_text),
+    feedback_used: feedback.map((fb) => ({
+      feedback_text: fb.feedback_text,
+      document_file_url: fb.document_file_url || null,
+      document_file_name: fb.document_file_name || null,
+    })),
     document_description,
   };
 }
