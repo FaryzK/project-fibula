@@ -211,6 +211,20 @@ module.exports = {
 
   // ── Matching Sets ─────────────────────────────────────────────────────────
 
+  /** List all matching sets across all rules owned by the user (for the landing tab). */
+  async findAllMatchingSets(userId, { status } = {}) {
+    const query = db(MATCHING_SETS)
+      .join(RULES, `${MATCHING_SETS}.rule_id`, `${RULES}.id`)
+      .where(`${RULES}.user_id`, userId)
+      .select(
+        `${MATCHING_SETS}.*`,
+        `${RULES}.name as rule_name`
+      )
+      .orderBy(`${MATCHING_SETS}.created_at`, 'desc');
+    if (status) query.where(`${MATCHING_SETS}.status`, status);
+    return query;
+  },
+
   async findMatchingSets(ruleId, { status } = {}) {
     const query = db(MATCHING_SETS).where({ rule_id: ruleId });
     if (status) query.where({ status });
