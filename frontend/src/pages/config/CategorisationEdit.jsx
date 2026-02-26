@@ -117,19 +117,25 @@ function CategorisationEdit() {
             <div className="space-y-3">
               {labels.map((l, i) => (
                 <div key={i} className="flex gap-2 items-start">
-                  <div className="flex-1 space-y-1">
-                    <input
-                      value={l.label}
-                      onChange={(e) => updateLabel(i, 'label', e.target.value.toUpperCase())}
-                      placeholder="LABEL (e.g. INVOICE)"
-                      className="w-full px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
-                    />
-                    <input
-                      value={l.description}
-                      onChange={(e) => updateLabel(i, 'description', e.target.value)}
-                      placeholder="Description (e.g. A document with invoice number only)"
-                      className="w-full px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
+                  <div className="flex-1 space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-gray-500 dark:text-gray-400 w-24 shrink-0 text-right">Label {i + 1}</span>
+                      <input
+                        value={l.label}
+                        onChange={(e) => updateLabel(i, 'label', e.target.value.toUpperCase())}
+                        placeholder="e.g. INVOICE"
+                        className="flex-1 px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-gray-500 dark:text-gray-400 w-24 shrink-0 text-right">Description</span>
+                      <input
+                        value={l.description}
+                        onChange={(e) => updateLabel(i, 'description', e.target.value)}
+                        placeholder="e.g. A document with invoice number only"
+                        className="flex-1 px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
                   </div>
                   {labels.length > 1 && (
                     <button
