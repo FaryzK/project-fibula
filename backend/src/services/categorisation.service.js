@@ -54,7 +54,7 @@ async function classifyDocument(document, labels) {
           contentItem,
           {
             type: 'input_text',
-            text: `Classify this document into one of the following categories:\n${categoryList}`,
+            text: `Classify this document into one of the following categories and return valid JSON:\n${categoryList}`,
           },
         ],
       },
