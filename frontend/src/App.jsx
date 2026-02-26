@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/auth/Login';
 import AuthCallback from './pages/auth/AuthCallback';
@@ -12,12 +13,33 @@ import DataMapSetEdit from './pages/config/DataMapSetEdit';
 import DataMapRuleEdit from './pages/config/DataMapRuleEdit';
 import ReconciliationRuleEdit from './pages/config/ReconciliationRuleEdit';
 import MatchingSetDetail from './pages/config/MatchingSetDetail';
+import supabase from './services/supabase';
+import useAuthStore from './stores/useAuthStore';
 
 function protect(element) {
   return <ProtectedRoute>{element}</ProtectedRoute>;
 }
 
 function App() {
+  const setSession = useAuthStore((s) => s.setSession);
+  const clearSession = useAuthStore((s) => s.clearSession);
+
+  useEffect(() => {
+    // Re-sync session from Supabase on app load (handles stale localStorage)
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) setSession(session);
+      else clearSession();
+    });
+
+    // Keep session updated on token refresh, sign-in, sign-out
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) setSession(session);
+      else clearSession();
+    });
+
+    return () => subscription.unsubscribe();
+  }, [setSession, clearSession]);
+
   return (
     <BrowserRouter>
       <Routes>

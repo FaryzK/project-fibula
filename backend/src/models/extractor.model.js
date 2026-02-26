@@ -161,6 +161,7 @@ module.exports = {
         `${HELD}.document_execution_id`,
         `${HELD}.status`,
         `${HELD}.held_at`,
+        `${HELD}.held_reason`,
         `${DOCUMENTS}.file_name`,
         `${DOCUMENTS}.file_url`,
         `${DOC_EXECUTIONS}.document_id`,
@@ -174,13 +175,14 @@ module.exports = {
     return db(HELD).where({ id: heldId }).first();
   },
 
-  async createHeld({ extractorId, documentExecutionId }) {
+  async createHeld({ extractorId, documentExecutionId, heldReason }) {
     const [row] = await db(HELD)
       .insert({
         extractor_id: extractorId,
         document_execution_id: documentExecutionId,
         status: 'held',
         held_at: new Date(),
+        held_reason: heldReason || null,
       })
       .returning('*');
     return row;
@@ -192,7 +194,19 @@ module.exports = {
   },
 
   async findFeedback(extractorId) {
-    return db(FEEDBACK).where({ extractor_id: extractorId }).orderBy('created_at', 'desc');
+    return db(FEEDBACK)
+      .leftJoin(DOCUMENTS, `${FEEDBACK}.document_id`, `${DOCUMENTS}.id`)
+      .where(`${FEEDBACK}.extractor_id`, extractorId)
+      .orderBy(`${FEEDBACK}.created_at`, 'desc')
+      .select(
+        `${FEEDBACK}.*`,
+        `${DOCUMENTS}.file_name as document_file_name`,
+        `${DOCUMENTS}.file_url as document_file_url`,
+      );
+  },
+
+  async deleteFeedback(feedbackId, extractorId) {
+    return db(FEEDBACK).where({ id: feedbackId, extractor_id: extractorId }).delete();
   },
 
   async createFeedback({ extractorId, documentId, targetType, targetId, feedbackText, imageEmbedding }) {
@@ -213,11 +227,18 @@ module.exports = {
 
   // Find top-k training feedback by image embedding similarity (pgvector)
   async findSimilarFeedback(extractorId, embedding, limit = 5) {
-    if (!embedding) return db(FEEDBACK).where({ extractor_id: extractorId }).limit(limit);
-    return db(FEEDBACK)
-      .where({ extractor_id: extractorId })
-      .whereNotNull('image_embedding')
-      .orderByRaw('image_embedding <-> ?::vector', [JSON.stringify(embedding)])
+    const base = db(FEEDBACK)
+      .leftJoin(DOCUMENTS, `${FEEDBACK}.document_id`, `${DOCUMENTS}.id`)
+      .where(`${FEEDBACK}.extractor_id`, extractorId)
+      .select(
+        `${FEEDBACK}.*`,
+        `${DOCUMENTS}.file_name as document_file_name`,
+        `${DOCUMENTS}.file_url as document_file_url`,
+      );
+    if (!embedding) return base.limit(limit);
+    return base
+      .whereNotNull(`${FEEDBACK}.image_embedding`)
+      .orderByRaw(`${FEEDBACK}.image_embedding <-> ?::vector`, [JSON.stringify(embedding)])
       .limit(limit);
   },
 
