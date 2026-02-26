@@ -12,12 +12,11 @@ import supabase from '../../services/supabase';
 
 const TABS = [
   { id: 'workflows', label: 'Workflows' },
-  { id: 'document-folders', label: 'Document Folders' },
+  { id: 'extractors', label: 'Extractors' },
+  { id: 'data-mapper', label: 'Data Mapper' },
   { id: 'reconciliation', label: 'Reconciliation' },
   { id: 'splitting', label: 'Document Splitting' },
   { id: 'categorisation', label: 'Categorisation' },
-  { id: 'extractors', label: 'Extractors' },
-  { id: 'data-mapper', label: 'Data Mapper' },
 ];
 
 function Landing() {

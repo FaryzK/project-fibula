@@ -25,11 +25,13 @@ function CanvasInner() {
   const { id: workflowId } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { getViewport, setCenter } = useReactFlow();
+  const { getViewport, setCenter, screenToFlowPosition } = useReactFlow();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [selectedNode, setSelectedNode] = useState(null); // node open in NodePanel
   const [renamingTitle, setRenamingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState('');
+  const [pendingConnection, setPendingConnection] = useState(null); // { fromNodeId, fromHandleId, fromHandleType, position }
+  const connectingNodeRef = useRef(null);
   const fileInputRef = useRef(null);
 
   const {
@@ -62,11 +64,42 @@ function CanvasInner() {
   }, [searchParams, nodes, setCenter]);
 
   const handleAddNode = useCallback(async (nodeType, label) => {
-    const { x, y, zoom } = getViewport();
-    const centerX = (-x + window.innerWidth / 2) / zoom;
-    const centerY = (-y + window.innerHeight / 2) / zoom;
-    await addNode(nodeType, label, { x: centerX, y: centerY });
-  }, [getViewport, addNode]);
+    let position;
+    if (pendingConnection) {
+      position = pendingConnection.position;
+    } else {
+      const { x, y, zoom } = getViewport();
+      position = { x: (-x + window.innerWidth / 2) / zoom, y: (-y + window.innerHeight / 2) / zoom };
+    }
+
+    const dbNode = await addNode(nodeType, label, position);
+
+    if (pendingConnection && dbNode) {
+      const conn = pendingConnection.fromHandleType === 'target'
+        ? { source: dbNode.id, sourceHandle: 'default', target: pendingConnection.fromNodeId, targetHandle: pendingConnection.fromHandleId || 'default' }
+        : { source: pendingConnection.fromNodeId, sourceHandle: pendingConnection.fromHandleId || 'default', target: dbNode.id, targetHandle: 'default' };
+      await onConnect(conn);
+      setPendingConnection(null);
+      setPaletteOpen(false);
+    }
+  }, [getViewport, addNode, pendingConnection, onConnect]);
+
+  const handleConnectStart = useCallback((_, { nodeId, handleId, handleType }) => {
+    connectingNodeRef.current = { nodeId, handleId, handleType };
+  }, []);
+
+  const handleConnectEnd = useCallback((event) => {
+    const ref = connectingNodeRef.current;
+    connectingNodeRef.current = null;
+    if (!ref?.nodeId) return;
+    const targetIsPane = event.target.classList.contains('react-flow__pane');
+    if (targetIsPane) {
+      const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      setPendingConnection({ fromNodeId: ref.nodeId, fromHandleId: ref.handleId, fromHandleType: ref.handleType, position });
+      setPaletteOpen(true);
+      setSelectedNode(null);
+    }
+  }, [screenToFlowPosition]);
 
   const handleEdgeClick = useCallback((_, edge) => {
     if (window.confirm('Delete this connection?')) deleteEdge(edge.id);
@@ -83,6 +116,20 @@ function CanvasInner() {
     setSelectedNode(node);
     setPaletteOpen(false);
   }, []);
+
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  }, []);
+
+  const handleDrop = useCallback(async (e) => {
+    e.preventDefault();
+    const nodeType = e.dataTransfer.getData('application/nodetype');
+    const label = e.dataTransfer.getData('application/nodelabel');
+    if (!nodeType) return;
+    const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+    await addNode(nodeType, label, position);
+  }, [screenToFlowPosition, addNode]);
 
   async function commitTitle() {
     if (titleValue.trim() && titleValue.trim() !== workflowName) {
@@ -172,7 +219,7 @@ function CanvasInner() {
             {isPublished ? 'Unpublish' : 'Publish'}
           </button>
           <button
-            onClick={() => { setPaletteOpen((o) => !o); setSelectedNode(null); }}
+            onClick={() => { setPaletteOpen((o) => !o); setSelectedNode(null); setPendingConnection(null); }}
             className="w-8 h-8 flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-lg font-bold transition"
             title="Add node"
           >
@@ -197,7 +244,7 @@ function CanvasInner() {
 
       {/* Canvas + sidebars */}
       <div className="flex flex-1 overflow-hidden">
-        <div className="flex-1">
+        <div className="flex-1" onDragOver={handleDragOver} onDrop={handleDrop}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -206,6 +253,8 @@ function CanvasInner() {
             onEdgesChange={onEdgesChange}
             onNodeDragStop={onNodeDragStop}
             onConnect={onConnect}
+            onConnectStart={handleConnectStart}
+            onConnectEnd={handleConnectEnd}
             onEdgeClick={handleEdgeClick}
             onNodeDoubleClick={handleNodeDoubleClick}
             fitView
@@ -227,7 +276,8 @@ function CanvasInner() {
         {paletteOpen && !selectedNode && (
           <NodePalette
             onAddNode={handleAddNode}
-            onClose={() => setPaletteOpen(false)}
+            onClose={() => { setPaletteOpen(false); setPendingConnection(null); }}
+            connectingFrom={pendingConnection ? nodes.find((n) => n.id === pendingConnection.fromNodeId)?.data?.label : null}
           />
         )}
       </div>
