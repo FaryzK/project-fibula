@@ -33,25 +33,47 @@ function getField(obj, fieldPath) {
 }
 
 /**
- * Check if two metadata objects match according to doc_matching_links for a given target extractor.
+ * Check whether the incoming document belongs to a pending matching set.
+ *
+ * Links are now any-to-any (left_extractor_id/left_field ↔ right_extractor_id/right_field).
+ * For each link that involves the incoming extractor:
+ *   - If the other side is already in the set: MUST match, or return false.
+ *   - If the other side is not in the set yet: skip (can't evaluate yet).
+ * If every relevant link was skipped (other side absent), the doc can't be placed yet → return false.
  */
-function docMatchesAnchor(anchorMeta, targetMeta, docLinks, targetExtractorId) {
-  const relevantLinks = docLinks.filter((l) => l.target_extractor_id === targetExtractorId);
-  if (relevantLinks.length === 0) return true; // no links = match by default
+function docBelongsToSet(incomingExtractorId, incomingMeta, setDocs, docLinks) {
+  const relevantLinks = docLinks.filter(
+    (l) => l.left_extractor_id === incomingExtractorId || l.right_extractor_id === incomingExtractorId
+  );
+  if (relevantLinks.length === 0) return true; // no constraints = match by default
+
+  let anyEvaluated = false;
 
   for (const link of relevantLinks) {
-    const anchorVal = getField(anchorMeta, link.anchor_field);
-    const targetVal = getField(targetMeta, link.target_field);
-    if (anchorVal === undefined || targetVal === undefined) continue;
+    const isOnLeft = link.left_extractor_id === incomingExtractorId;
+    const incomingField = isOnLeft ? link.left_field : link.right_field;
+    const otherExtractorId = isOnLeft ? link.right_extractor_id : link.left_extractor_id;
+    const otherField = isOnLeft ? link.right_field : link.left_field;
+
+    const otherDoc = setDocs.find((d) => d.extractor_id === otherExtractorId);
+    if (!otherDoc) continue; // other side not in set yet — skip
+
+    anyEvaluated = true;
+    const incomingVal = getField(incomingMeta, incomingField);
+    const otherVal = getField(otherDoc.metadata.header || otherDoc.metadata, otherField);
+
+    if (incomingVal === undefined || otherVal === undefined) continue;
 
     if (link.match_type === 'exact') {
-      if (String(anchorVal) !== String(targetVal)) return false;
+      if (String(incomingVal) !== String(otherVal)) return false;
     } else {
       const threshold = link.match_threshold != null ? link.match_threshold : 0.8;
-      if (stringSimilarity(anchorVal, targetVal) < threshold) return false;
+      if (stringSimilarity(incomingVal, otherVal) < threshold) return false;
     }
   }
-  return true;
+
+  // If no link could be evaluated (all other sides absent), don't place the doc yet
+  return anyEvaluated;
 }
 
 /**
@@ -151,11 +173,11 @@ async function processDocument({ ruleId, docExecutionId, metadata, workflowId, n
   let foundSet = null;
   for (const variation of rule.variations) {
     for (const set of pendingSets) {
-      const matches = docMatchesAnchor(
-        set.anchorMetadata,
-        metadata,
-        variation.doc_matching_links,
-        extractorId
+      const matches = docBelongsToSet(
+        extractorId,
+        metadata.header || metadata,
+        set.setDocs,
+        variation.doc_matching_links
       );
       if (matches) {
         foundSet = set;
