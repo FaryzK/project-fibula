@@ -88,10 +88,10 @@ function DataMapSetEdit() {
       const payload = { name, headers: cleanHeaders, records };
       if (isNew) {
         await dataMapperService.createSet(payload);
-        navigate('/app?tab=dataMapper');
+        navigate('/app?tab=data-mapper');
       } else {
         await dataMapperService.updateSet(id, payload);
-        navigate('/app?tab=dataMapper');
+        navigate('/app?tab=data-mapper');
       }
     } catch (err) {
       setError(err.message);
@@ -104,7 +104,7 @@ function DataMapSetEdit() {
     if (!window.confirm('Delete this data map set?')) return;
     try {
       await dataMapperService.removeSet(id);
-      navigate('/app?tab=dataMapper');
+      navigate('/app?tab=data-mapper');
     } catch (err) {
       setError(err.response?.data?.error || err.message);
     }
@@ -116,7 +116,7 @@ function DataMapSetEdit() {
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-8">
       <div className="max-w-4xl mx-auto">
         <button
-          onClick={() => navigate('/app?tab=dataMapper')}
+          onClick={() => navigate('/app?tab=data-mapper')}
           className="text-sm text-indigo-600 hover:underline mb-6 block"
         >
           ← Back to Data Mapper
