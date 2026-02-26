@@ -71,9 +71,10 @@ module.exports = {
         await db(DOC_LINKS).insert(
           v.doc_matching_links.map((l) => ({
             variation_id: variation.id,
-            anchor_field: l.anchor_field,
-            target_extractor_id: l.target_extractor_id,
-            target_field: l.target_field,
+            left_extractor_id: l.left_extractor_id || null,
+            left_field: l.left_field || null,
+            right_extractor_id: l.right_extractor_id || null,
+            right_field: l.right_field || null,
             match_type: l.match_type || 'exact',
             match_threshold: l.match_threshold || null,
           }))
@@ -84,11 +85,12 @@ module.exports = {
         await db(TABLE_KEYS).insert(
           v.table_matching_keys.map((k) => ({
             variation_id: variation.id,
-            anchor_table_type_id: k.anchor_table_type_id,
-            target_extractor_id: k.target_extractor_id,
-            target_table_type_id: k.target_table_type_id,
-            anchor_column: k.anchor_column,
-            target_column: k.target_column,
+            left_extractor_id: k.left_extractor_id || null,
+            left_table_type: k.left_table_type || null,
+            left_column: k.left_column || null,
+            right_extractor_id: k.right_extractor_id || null,
+            right_table_type: k.right_table_type || null,
+            right_column: k.right_column || null,
           }))
         );
       }
@@ -150,11 +152,26 @@ module.exports = {
           await db(DOC_LINKS).insert(
             v.doc_matching_links.map((l) => ({
               variation_id: variation.id,
-              anchor_field: l.anchor_field,
-              target_extractor_id: l.target_extractor_id,
-              target_field: l.target_field,
+              left_extractor_id: l.left_extractor_id || null,
+              left_field: l.left_field || null,
+              right_extractor_id: l.right_extractor_id || null,
+              right_field: l.right_field || null,
               match_type: l.match_type || 'exact',
               match_threshold: l.match_threshold || null,
+            }))
+          );
+        }
+
+        if (v.table_matching_keys && v.table_matching_keys.length > 0) {
+          await db(TABLE_KEYS).insert(
+            v.table_matching_keys.map((k) => ({
+              variation_id: variation.id,
+              left_extractor_id: k.left_extractor_id || null,
+              left_table_type: k.left_table_type || null,
+              left_column: k.left_column || null,
+              right_extractor_id: k.right_extractor_id || null,
+              right_table_type: k.right_table_type || null,
+              right_column: k.right_column || null,
             }))
           );
         }
@@ -278,18 +295,23 @@ module.exports = {
     return row;
   },
 
-  // Find a pending matching set for a rule where the anchor metadata matches the incoming doc
-  // Returns set + anchor metadata for comparison
+  // Find all pending matching sets for a rule.
+  // Returns each set with setDocs: [{ extractor_id, metadata }] for all docs currently in the set.
   async findPendingMatchingSets(ruleId) {
     const sets = await db(MATCHING_SETS)
       .where({ rule_id: ruleId, status: 'pending' })
       .orderBy('created_at', 'asc');
     const result = [];
     for (const set of sets) {
-      const anchorExec = await db(DOC_EXECUTIONS)
-        .where({ id: set.anchor_document_execution_id })
-        .first();
-      result.push({ ...set, anchorMetadata: anchorExec ? JSON.parse(anchorExec.metadata || '{}') : {} });
+      const rows = await db(SET_DOCS)
+        .join(DOC_EXECUTIONS, `${SET_DOCS}.document_execution_id`, `${DOC_EXECUTIONS}.id`)
+        .where(`${SET_DOCS}.matching_set_id`, set.id)
+        .select(`${SET_DOCS}.extractor_id`, `${DOC_EXECUTIONS}.metadata`);
+      const setDocs = rows.map((r) => ({
+        extractor_id: r.extractor_id,
+        metadata: JSON.parse(r.metadata || '{}'),
+      }));
+      result.push({ ...set, setDocs });
     }
     return result;
   },
