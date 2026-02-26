@@ -2,6 +2,7 @@ const extractorModel = require('../models/extractor.model');
 const documentExecutionModel = require('../models/documentExecution.model');
 const workflowRunModel = require('../models/workflowRun.model');
 const { resumeDocumentExecution } = require('../services/execution.service');
+const { testExtractFromBuffer, generateEmbedding } = require('../services/extractor.service');
 
 module.exports = {
   async list(req, res, next) {
@@ -115,23 +116,43 @@ module.exports = {
     }
   },
 
+  async testExtract(req, res, next) {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'file is required' });
+      const extractor = await extractorModel.findById(req.params.id);
+      if (!extractor) return res.status(404).json({ error: 'Not found' });
+      if (extractor.user_id !== req.dbUser.id) return res.status(403).json({ error: 'Forbidden' });
+
+      const result = await testExtractFromBuffer(req.file.buffer, req.file.mimetype, extractor);
+      return res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+
   async createFeedback(req, res, next) {
     try {
       const extractor = await extractorModel.findById(req.params.id);
       if (!extractor) return res.status(404).json({ error: 'Not found' });
       if (extractor.user_id !== req.dbUser.id) return res.status(403).json({ error: 'Forbidden' });
 
-      const { document_id, target_type, target_id, feedback_text } = req.body;
-      if (!document_id || !target_type || !target_id || !feedback_text) {
-        return res.status(400).json({ error: 'document_id, target_type, target_id, and feedback_text are required' });
+      const { document_id, target_type, target_id, feedback_text, document_description } = req.body;
+      if (!target_type || !target_id || !feedback_text) {
+        return res.status(400).json({ error: 'target_type, target_id, and feedback_text are required' });
       }
+
+      // Generate embedding from document_description if provided
+      const imageEmbedding = document_description
+        ? await generateEmbedding(document_description)
+        : null;
 
       const feedback = await extractorModel.createFeedback({
         extractorId: req.params.id,
-        documentId: document_id,
+        documentId: document_id || null,
         targetType: target_type,
         targetId: target_id,
         feedbackText: feedback_text,
+        imageEmbedding,
       });
       return res.status(201).json(feedback);
     } catch (err) {

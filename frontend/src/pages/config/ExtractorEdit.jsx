@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import extractorService from '../../services/extractorService';
 
@@ -83,10 +83,44 @@ function TableTypeSection({ tt, onChange, onRemove }) {
   );
 }
 
+function FeedbackInlineForm({ label, onSave, onCancel, saving }) {
+  const [text, setText] = useState('');
+  return (
+    <div className="mt-2 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg">
+      <p className="text-xs font-medium text-yellow-800 dark:text-yellow-300 mb-1">
+        Give feedback for: <span className="font-bold">{label}</span>
+      </p>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="Describe the correct value or correction (e.g. 'Invoice Number should be INV-2024-001, not INV001')"
+        rows={2}
+        className="w-full border border-yellow-300 dark:border-yellow-600 rounded px-2 py-1 text-xs bg-white dark:bg-gray-800 text-gray-900 dark:text-white resize-none focus:outline-none focus:ring-2 focus:ring-yellow-400"
+      />
+      <div className="flex gap-2 mt-2">
+        <button
+          onClick={() => onSave(text)}
+          disabled={saving || !text.trim()}
+          className="px-3 py-1 bg-yellow-500 hover:bg-yellow-600 text-white text-xs rounded transition disabled:opacity-50"
+        >
+          {saving ? 'Saving…' : 'Save feedback'}
+        </button>
+        <button
+          onClick={onCancel}
+          className="px-3 py-1 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ExtractorEdit() {
   const { id } = useParams();
   const isNew = id === 'new';
   const navigate = useNavigate();
+  const fileInputRef = useRef(null);
 
   const [name, setName] = useState('');
   const [holdAll, setHoldAll] = useState(false);
@@ -98,6 +132,14 @@ function ExtractorEdit() {
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+
+  // Test extraction state
+  const [testFile, setTestFile] = useState(null);
+  const [testResult, setTestResult] = useState(null);
+  const [testing, setTesting] = useState(false);
+  const [testError, setTestError] = useState(null);
+  const [feedbackTarget, setFeedbackTarget] = useState(null); // { type, targetId, label }
+  const [savingFeedback, setSavingFeedback] = useState(false);
 
   useEffect(() => {
     if (isNew) return;
@@ -176,6 +218,42 @@ function ExtractorEdit() {
       navigate('/app?tab=extractors');
     } catch (err) {
       setError(err.response?.data?.error || err.message);
+    }
+  }
+
+  async function handleTestExtract() {
+    if (!testFile) return;
+    setTesting(true);
+    setTestError(null);
+    setTestResult(null);
+    setFeedbackTarget(null);
+    try {
+      const result = await extractorService.testExtract(id, testFile);
+      setTestResult(result);
+    } catch (err) {
+      setTestError(err.response?.data?.error || err.message);
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function handleSaveFeedback(targetType, targetId, label, feedbackText) {
+    if (!feedbackText.trim()) return;
+    setSavingFeedback(true);
+    try {
+      const payload = {
+        target_type: targetType,
+        target_id: targetId,
+        feedback_text: feedbackText,
+        document_description: testResult?.document_description || null,
+      };
+      const newFb = await extractorService.createFeedback(id, payload);
+      setFeedback((prev) => [newFb, ...prev]);
+      setFeedbackTarget(null);
+    } catch (err) {
+      setTestError(err.response?.data?.error || err.message);
+    } finally {
+      setSavingFeedback(false);
     }
   }
 
@@ -280,6 +358,195 @@ function ExtractorEdit() {
           </div>
         </form>
 
+        {/* Test Extraction */}
+        {!isNew && (
+          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 mt-6">
+            <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Test Extraction</h2>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+              Upload a document to test how this extractor performs. Click on any extracted field to give a correction.
+            </p>
+
+            <div className="flex items-center gap-3 mb-4">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,.pdf"
+                className="hidden"
+                onChange={(e) => {
+                  setTestFile(e.target.files[0] || null);
+                  setTestResult(null);
+                  setFeedbackTarget(null);
+                  setTestError(null);
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition"
+              >
+                {testFile ? testFile.name : 'Choose file…'}
+              </button>
+              <button
+                type="button"
+                onClick={handleTestExtract}
+                disabled={!testFile || testing}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition disabled:opacity-50"
+              >
+                {testing ? 'Extracting…' : 'Run Extraction'}
+              </button>
+              {testFile && (
+                <button
+                  type="button"
+                  onClick={() => { setTestFile(null); setTestResult(null); setFeedbackTarget(null); setTestError(null); if (fileInputRef.current) fileInputRef.current.value = ''; }}
+                  className="text-xs text-gray-400 hover:text-gray-600"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
+            {testError && (
+              <p className="text-red-500 text-xs mb-3">{testError}</p>
+            )}
+
+            {testResult && (
+              <div className="space-y-4">
+                {/* Feedback applied */}
+                {testResult.feedback_used && testResult.feedback_used.length > 0 && (
+                  <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 rounded-lg p-3">
+                    <p className="text-xs font-medium text-green-800 dark:text-green-300 mb-1">
+                      Training feedback applied ({testResult.feedback_used.length}):
+                    </p>
+                    <ul className="space-y-1">
+                      {testResult.feedback_used.map((fb, i) => (
+                        <li key={i} className="text-xs text-green-700 dark:text-green-400">• {fb}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Header fields results */}
+                {Object.keys(testResult.header).length > 0 && (
+                  <div>
+                    <h3 className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide mb-2">Header Fields</h3>
+                    <div className="border border-gray-200 dark:border-gray-600 rounded-lg overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead className="bg-gray-50 dark:bg-gray-700">
+                          <tr>
+                            <th className="text-left px-3 py-2 font-medium text-gray-600 dark:text-gray-300 w-1/3">Field</th>
+                            <th className="text-left px-3 py-2 font-medium text-gray-600 dark:text-gray-300">Extracted value</th>
+                            <th className="px-3 py-2 w-20"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(testResult.header).map(([fieldName, value]) => {
+                            const hf = headerFields.find((f) => f.field_name === fieldName);
+                            const targetId = hf?.id || fieldName;
+                            const isActive = feedbackTarget?.targetId === targetId && feedbackTarget?.targetType === 'header_field';
+                            return (
+                              <tr key={fieldName} className="border-t border-gray-100 dark:border-gray-700">
+                                <td className="px-3 py-2 font-medium text-gray-700 dark:text-gray-300">{fieldName}</td>
+                                <td className="px-3 py-2 text-gray-900 dark:text-white">
+                                  {value === null || value === undefined || value === '' ? (
+                                    <span className="text-gray-400 italic">—</span>
+                                  ) : String(value)}
+                                  {isActive && (
+                                    <FeedbackInlineForm
+                                      label={fieldName}
+                                      saving={savingFeedback}
+                                      onSave={(text) => handleSaveFeedback('header_field', targetId, fieldName, text)}
+                                      onCancel={() => setFeedbackTarget(null)}
+                                    />
+                                  )}
+                                </td>
+                                <td className="px-3 py-2 text-right">
+                                  <button
+                                    onClick={() => setFeedbackTarget(isActive ? null : { targetType: 'header_field', targetId, label: fieldName })}
+                                    className="text-xs text-yellow-600 hover:text-yellow-800 dark:text-yellow-400 dark:hover:text-yellow-200"
+                                  >
+                                    {isActive ? 'Cancel' : 'Give feedback'}
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Table results */}
+                {Object.entries(testResult.tables).map(([tableName, rows]) => {
+                  const tt = tableTypes.find((t) => t.type_name === tableName);
+                  const columns = rows.length > 0 ? Object.keys(rows[0]) : (tt?.columns || []).map((c) => c.column_name);
+                  return (
+                    <div key={tableName}>
+                      <h3 className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide mb-2">
+                        {tableName}
+                      </h3>
+                      {rows.length === 0 ? (
+                        <p className="text-xs text-gray-400 italic">No rows extracted.</p>
+                      ) : (
+                        <div className="border border-gray-200 dark:border-gray-600 rounded-lg overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <thead className="bg-gray-50 dark:bg-gray-700">
+                              <tr>
+                                {columns.map((col) => (
+                                  <th key={col} className="text-left px-3 py-2 font-medium text-gray-600 dark:text-gray-300 whitespace-nowrap">
+                                    {col}
+                                  </th>
+                                ))}
+                                <th className="px-3 py-2 w-20"></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rows.map((row, rowIdx) => {
+                                const ttCol = tt?.columns?.[0];
+                                const targetId = ttCol?.id || `${tableName}-${rowIdx}`;
+                                const isActive = feedbackTarget?.targetId === `row-${tableName}-${rowIdx}` && feedbackTarget?.targetType === 'table_column';
+                                return (
+                                  <tr key={rowIdx} className="border-t border-gray-100 dark:border-gray-700">
+                                    {columns.map((col) => (
+                                      <td key={col} className="px-3 py-2 text-gray-900 dark:text-white whitespace-nowrap">
+                                        {row[col] === null || row[col] === undefined ? (
+                                          <span className="text-gray-400 italic">—</span>
+                                        ) : String(row[col])}
+                                      </td>
+                                    ))}
+                                    <td className="px-3 py-2 text-right">
+                                      <button
+                                        onClick={() => setFeedbackTarget(isActive ? null : { targetType: 'table_column', targetId: `row-${tableName}-${rowIdx}`, label: `${tableName} row ${rowIdx + 1}` })}
+                                        className="text-xs text-yellow-600 hover:text-yellow-800 dark:text-yellow-400 dark:hover:text-yellow-200 whitespace-nowrap"
+                                      >
+                                        {isActive ? 'Cancel' : 'Give feedback'}
+                                      </button>
+                                      {isActive && (
+                                        <div className="absolute">
+                                          <FeedbackInlineForm
+                                            label={`${tableName} row ${rowIdx + 1}`}
+                                            saving={savingFeedback}
+                                            onSave={(text) => handleSaveFeedback('table_column', targetId, `${tableName} row ${rowIdx + 1}`, text)}
+                                            onCancel={() => setFeedbackTarget(null)}
+                                          />
+                                        </div>
+                                      )}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Usage */}
         {!isNew && usage.length > 0 && (
           <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 mt-6">
@@ -307,10 +574,15 @@ function ExtractorEdit() {
             </h2>
             <ul className="space-y-2">
               {feedback.map((fb) => (
-                <li key={fb.id} className="text-xs bg-gray-50 dark:bg-gray-700 rounded p-2">
-                  <span className="font-medium text-gray-700 dark:text-gray-300">{fb.target_type}</span>
-                  {' — '}
-                  <span className="text-gray-500 dark:text-gray-400">{fb.feedback_text}</span>
+                <li key={fb.id} className="text-xs bg-gray-50 dark:bg-gray-700 rounded p-2 flex items-start gap-2">
+                  <span className={`shrink-0 px-1.5 py-0.5 rounded text-xs font-medium ${fb.image_embedding ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-gray-200 text-gray-500 dark:bg-gray-600 dark:text-gray-400'}`}>
+                    {fb.image_embedding ? 'embedded' : 'no embedding'}
+                  </span>
+                  <div>
+                    <span className="font-medium text-gray-700 dark:text-gray-300">{fb.target_type}</span>
+                    {' — '}
+                    <span className="text-gray-500 dark:text-gray-400">{fb.feedback_text}</span>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -323,24 +595,51 @@ function ExtractorEdit() {
             <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
               Held Documents ({held.length})
             </h2>
-            <ul className="space-y-2">
+            <ul className="space-y-3">
               {held.map((doc) => (
-                <li
-                  key={doc.id}
-                  className="flex items-center justify-between bg-gray-50 dark:bg-gray-700 rounded-lg px-3 py-2"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-gray-900 dark:text-white">{doc.file_name}</p>
-                    <p className="text-xs text-gray-400 dark:text-gray-500">
-                      Held at {new Date(doc.held_at).toLocaleString()}
-                    </p>
+                <li key={doc.id} className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900 dark:text-white">{doc.file_name}</p>
+                      <p className="text-xs text-gray-400 dark:text-gray-500">
+                        Held at {new Date(doc.held_at).toLocaleString()}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleSendOut(doc.id)}
+                      className="text-xs px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition"
+                    >
+                      Send out
+                    </button>
                   </div>
-                  <button
-                    onClick={() => handleSendOut(doc.id)}
-                    className="text-xs px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition"
-                  >
-                    Send out
-                  </button>
+                  {/* Extracted metadata */}
+                  {doc.metadata && (
+                    <div className="mt-2 border-t border-gray-200 dark:border-gray-600 pt-2">
+                      {doc.metadata.header && Object.keys(doc.metadata.header).length > 0 && (
+                        <div className="mb-2">
+                          <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Extracted header:</p>
+                          <div className="grid grid-cols-2 gap-1">
+                            {Object.entries(doc.metadata.header).map(([k, v]) => (
+                              <div key={k} className="text-xs">
+                                <span className="text-gray-500 dark:text-gray-400">{k}: </span>
+                                <span className="text-gray-800 dark:text-gray-200">{v === null || v === undefined ? '—' : String(v)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {doc.metadata.tables && Object.keys(doc.metadata.tables).length > 0 && (
+                        <div>
+                          <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Extracted tables:</p>
+                          {Object.entries(doc.metadata.tables).map(([tName, rows]) => (
+                            <div key={tName} className="mb-1">
+                              <p className="text-xs text-gray-500 dark:text-gray-400 italic">{tName} ({Array.isArray(rows) ? rows.length : 0} rows)</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
