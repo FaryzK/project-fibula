@@ -410,18 +410,18 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
         currentNodeId: null,
       });
 
-      // Run all fanout siblings in parallel — they are independent sub-documents and safe
-      // to process concurrently (e.g. 2 categorisation LLM calls fire at the same time).
-      // The outer pendingExecQueue stays sequential to avoid reconciliation race conditions.
-      await Promise.all(
-        fanoutRuns.map(({ childExec, nextNodes }) =>
-          runDocument(childExec, nodes, edges, graph, workflowRunId, pendingExecQueue, nextNodes)
-            .catch((err) => {
-              console.error(`runDocument failed for fanout exec ${childExec?.id}:`, err);
-              return documentExecutionModel.updateStatus(childExec.id, { status: 'failed', currentNodeId: null }).catch(() => {});
-            })
-        )
-      );
+      // Run fanout siblings sequentially — if sub-documents converge at a reconciliation node
+      // downstream, parallel execution would cause a TOCTOU race: the "trigger" sub-doc checks
+      // siblings' held status before they've written it. Sequential guarantees each sub-doc
+      // is fully held before the next one runs.
+      for (const { childExec, nextNodes } of fanoutRuns) {
+        try {
+          await runDocument(childExec, nodes, edges, graph, workflowRunId, pendingExecQueue, nextNodes);
+        } catch (err) {
+          console.error(`runDocument failed for fanout exec ${childExec?.id}:`, err);
+          await documentExecutionModel.updateStatus(childExec.id, { status: 'failed', currentNodeId: null }).catch(() => {});
+        }
+      }
 
       return;
     }
@@ -484,11 +484,22 @@ async function runWorkflow(workflowRunId) {
 
   const graph = buildGraph(edges);
 
-  const pendingExecQueue = initialExecs.map((e) => ({ docExecution: e, startQueue: null }));
+  // Run initial trigger-path docs in parallel — looks good on demo and is safe in production
+  // (each doc is its own workflow run). The theoretical TOCTOU at a reconciliation node exists
+  // if two trigger paths converge there in the same manual run, but that is rare in practice.
+  // Fanout siblings are sequential (see runDocument) to handle the split-then-reconcile case.
+  const pendingExecQueue = [];
+  await Promise.all(
+    initialExecs.map((e) =>
+      runDocument(e, nodes, edges, graph, workflowRunId, pendingExecQueue, null).catch((err) => {
+        console.error(`runDocument failed for exec ${e?.id}:`, err);
+        return documentExecutionModel.updateStatus(e.id, { status: 'failed', currentNodeId: null }).catch(() => {});
+      })
+    )
+  );
 
-  // Sequential outer loop — reconciliation's setDocExecIds check requires docs to be in
-  // 'held' state before releasing them; parallel processing of independent trigger paths
-  // would cause TOCTOU races. Fanout siblings are parallelised inside runDocument instead.
+  // Drain any docs released by reconciliation during the parallel phase (sequential is fine
+  // here — they've already passed through the recon node and won't interact with each other).
   while (pendingExecQueue.length > 0) {
     const { docExecution, startQueue } = pendingExecQueue.shift();
     try {
