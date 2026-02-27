@@ -356,10 +356,9 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
     }
 
     if (result.type === 'fanout') {
-      // Create all child documents and queue them BEFORE marking the parent as completed.
-      // This prevents a polling window where splitting looks "done" but children haven't
-      // started yet, causing a visual gap on the canvas.
       const childDocIds = [];
+      const fanoutRuns = [];
+
       for (const subDoc of result.subDocuments) {
         const newDoc = await documentModel.create({
           userId: workflowUserId,
@@ -395,10 +394,7 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
           });
         }
 
-        pendingExecQueue.push({
-          docExecution: newExec[0],
-          startQueue: nextNodes,
-        });
+        fanoutRuns.push({ childExec: newExec[0], nextNodes });
       }
 
       // Update the log with child document IDs (no parent doc_id — parent stops here)
@@ -408,11 +404,24 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
         outputPort: 'default',
       });
 
-      // Mark parent as completed only after all children are in the queue
+      // Mark parent as completed
       await documentExecutionModel.updateStatus(docExecution.id, {
         status: 'completed',
         currentNodeId: null,
       });
+
+      // Run all fanout siblings in parallel — they are independent sub-documents and safe
+      // to process concurrently (e.g. 2 categorisation LLM calls fire at the same time).
+      // The outer pendingExecQueue stays sequential to avoid reconciliation race conditions.
+      await Promise.all(
+        fanoutRuns.map(({ childExec, nextNodes }) =>
+          runDocument(childExec, nodes, edges, graph, workflowRunId, pendingExecQueue, nextNodes)
+            .catch((err) => {
+              console.error(`runDocument failed for fanout exec ${childExec?.id}:`, err);
+              return documentExecutionModel.updateStatus(childExec.id, { status: 'failed', currentNodeId: null }).catch(() => {});
+            })
+        )
+      );
 
       return;
     }
@@ -434,6 +443,18 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
         const otherExec = await documentExecutionModel.findById(otherId);
         if (otherExec && otherExec.status === 'held') {
           const otherMeta = parseMeta(otherExec.metadata);
+
+          // Update this doc's recon log from 'held' → 'completed' with the correct output port
+          // so all output port handles light up on the canvas, not just the trigger doc's port.
+          const otherReconLog = await documentExecutionModel.findLog(otherId, nodeId);
+          if (otherReconLog) {
+            await documentExecutionModel.updateLog(otherReconLog.id, {
+              status: 'completed',
+              outputPort: otherPort,
+              outputMetadata: otherMeta,
+            });
+          }
+
           const otherEdges = (graph[nodeId] || []).filter((e) => e.sourcePort === otherPort);
           const startQ = otherEdges.map((e) => ({ nodeId: e.targetNodeId, metadata: otherMeta }));
           pendingExecQueue.push({ docExecution: otherExec, startQueue: startQ });
@@ -465,20 +486,19 @@ async function runWorkflow(workflowRunId) {
 
   const pendingExecQueue = initialExecs.map((e) => ({ docExecution: e, startQueue: null }));
 
-  // Process all pending execs in parallel batches — drain the queue each iteration
-  // so fanout children (or multiple trigger paths) run concurrently instead of sequentially.
+  // Sequential outer loop — reconciliation's setDocExecIds check requires docs to be in
+  // 'held' state before releasing them; parallel processing of independent trigger paths
+  // would cause TOCTOU races. Fanout siblings are parallelised inside runDocument instead.
   while (pendingExecQueue.length > 0) {
-    const batch = pendingExecQueue.splice(0, pendingExecQueue.length);
-    await Promise.all(
-      batch.map(({ docExecution, startQueue }) =>
-        runDocument(docExecution, nodes, edges, graph, workflowRunId, pendingExecQueue, startQueue).catch((err) => {
-          console.error(`runDocument failed for exec ${docExecution?.id}:`, err);
-          if (docExecution?.id) {
-            return documentExecutionModel.updateStatus(docExecution.id, { status: 'failed', currentNodeId: null }).catch(() => {});
-          }
-        })
-      )
-    );
+    const { docExecution, startQueue } = pendingExecQueue.shift();
+    try {
+      await runDocument(docExecution, nodes, edges, graph, workflowRunId, pendingExecQueue, startQueue);
+    } catch (err) {
+      console.error(`runDocument failed for exec ${docExecution?.id}:`, err);
+      if (docExecution?.id) {
+        await documentExecutionModel.updateStatus(docExecution.id, { status: 'failed', currentNodeId: null }).catch(() => {});
+      }
+    }
   }
 
   const allExecs = await documentExecutionModel.findByRunId(workflowRunId);
