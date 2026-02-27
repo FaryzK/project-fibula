@@ -1,0 +1,162 @@
+FLOW INSPECTOR
+
+The Flow Inspector is an alternate view of the workflow canvas page. Users toggle between the Canvas view and the Flow Inspector view using a toggle button in the toolbar. Both views live on the same page — the toggle simply switches what is rendered in the main area.
+
+The Flow Inspector gives users a real-time view of what is happening inside each node. Documents can be seen flowing in and out of nodes as the workflow runs. For nodes that hold documents, users can see what is held and take action.
+
+
+---
+
+LAYOUT
+
+The Flow Inspector has two main areas:
+
+Left sidebar — a list of all nodes in the workflow, ordered topologically (following the direction of document flow). Each node row shows:
+- The node name
+- A colour accent matching the node's category (same colours as the canvas)
+- Live count badges: number of documents currently Processing / Held / Failed at that node
+- Clicking a node row selects it and opens its document panel on the right
+
+Right panel — shows documents at the selected node, across three tabs:
+- Processing
+- Held (only shown for nodes that can hold documents: Extractor, Document Folder, Reconciliation)
+- Failed
+
+Top of the sidebar — an Orphaned section (always visible regardless of which node is selected). Clicking it opens the Orphaned documents panel in the right area.
+
+
+---
+
+PROCESSING TAB
+
+Shows documents that are currently being processed at this node (status = processing, current_node_id = this node).
+
+Each row shows:
+- File name
+- Time processing started
+
+Documents appear at the bottom of the list as they arrive. Documents disappear automatically when they move on to the next node or become held or failed.
+
+The list updates via polling every 2 seconds. No manual refresh required.
+
+Empty state: "No documents currently processing."
+
+
+---
+
+HELD TAB
+
+Only shown for nodes that can hold documents: Extractor, Document Folder, Reconciliation.
+
+Shows documents currently held at this node (status = held, current_node_id = this node).
+
+Each row shows:
+- File name
+- Time held since
+- For Extractor nodes: the hold reason (hold_all or missing mandatory fields)
+- A Delete button to permanently remove the document execution
+
+Documents appear at the bottom of the list as they become held. Documents disappear when they are released (sent to the next node) or deleted.
+
+The list updates via polling every 2 seconds.
+
+Empty state: "No documents held."
+
+
+---
+
+FAILED TAB
+
+Shows documents that failed at this node (looked up via node_execution_logs where node_id = this node and status = failed).
+
+Each row shows:
+- File name
+- Time of failure
+- Error message (truncated, expandable on click)
+- A Delete button to permanently remove the document execution
+- A Re-trigger button to re-run the document from the beginning of the workflow
+
+The list updates via polling every 2 seconds.
+
+Empty state: "No failed documents."
+
+
+---
+
+ORPHANED DOCUMENTS
+
+Orphaned documents are document executions that were held at a node when that node was deleted. They are no longer attached to any active node and cannot continue through the workflow on their own.
+
+The Orphaned panel shows all orphaned documents for the current workflow across all time.
+
+Each row shows:
+- File name
+- The name of the node it was orphaned from (stored at time of deletion, since the node no longer exists)
+- Time orphaned
+- A checkbox for multi-select
+- A Delete button per row
+
+Bulk actions (appear when one or more rows are selected):
+- Delete selected
+- Re-trigger selected — opens the trigger selection modal (see Re-trigger flow below)
+
+Empty state: "No orphaned documents."
+
+
+---
+
+NODE DELETION WARNING
+
+When a user attempts to delete a node that has held documents, a warning modal appears before deletion proceeds.
+
+The modal shows:
+- How many documents are currently held at this node
+- A note that processing documents will be allowed to complete naturally; if they later reach the deleted node they will fail and appear in the Failed tab of the orphaned section
+- "If you proceed, all held documents will be moved to Orphaned Documents."
+
+Actions in the modal:
+- Cancel — dismiss and keep the node
+- Proceed — delete the node and move all held documents to orphaned status
+
+If the node has no held documents, deletion proceeds immediately without a warning (existing behaviour).
+
+
+---
+
+RE-TRIGGER FLOW
+
+Re-triggering sends a document back into the workflow from the beginning. The original file stored in Supabase Storage is reused — no re-upload is required.
+
+If the workflow has exactly one trigger node (Manual Upload or Webhook), the re-trigger starts immediately with no additional prompt.
+
+If the workflow has more than one trigger node, a modal appears for the user to choose which trigger(s) to send the document(s) to. The user can select multiple triggers (multi-select checkboxes). Each selected trigger will receive the document as if it had been uploaded there manually.
+
+Re-trigger is available from:
+- The Failed tab (per-document Re-trigger button)
+- The Orphaned panel (per-document Re-trigger button, or bulk Re-trigger for selected documents)
+
+
+---
+
+DATA MODEL
+
+document_executions gains a new status value: 'orphaned'
+
+When a node is deleted and it has held documents, those document_executions are updated:
+- status → 'orphaned'
+- current_node_id → null
+- A new column orphaned_node_name (TEXT) stores the name of the deleted node so it can be displayed in the Orphaned panel even though the node no longer exists
+
+No changes are needed to node_execution_logs — the existing held/failed log entries remain and are used for the Held and Failed tab queries.
+
+
+---
+
+NODES THAT CAN HOLD DOCUMENTS
+
+The Held tab is only shown for these node types:
+- EXTRACTOR
+- DOCUMENT_FOLDER
+- RECONCILIATION
+
+For all other node types the Held tab is hidden entirely.
