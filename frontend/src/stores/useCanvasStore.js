@@ -131,14 +131,17 @@ const useCanvasStore = create((set, get) => ({
     set((s) => ({ edges: s.edges.filter((e) => e.id !== edgeId) }));
   },
 
-  // Delete node from canvas and backend
-  deleteNode: async (nodeId) => {
+  // Delete node from canvas and backend.
+  // Returns { heldCount } if the node has held docs and force=false; null on success.
+  deleteNode: async (nodeId, force = false) => {
     const { workflowId } = get();
-    await workflowService.deleteNode(workflowId, nodeId);
+    const result = await workflowService.deleteNode(workflowId, nodeId, force);
+    if (result?.heldCount) return result;
     set((s) => ({
       nodes: s.nodes.filter((n) => n.id !== nodeId),
       edges: s.edges.filter((e) => e.source !== nodeId && e.target !== nodeId),
     }));
+    return null;
   },
 
   renameNode: async (nodeId, name) => {

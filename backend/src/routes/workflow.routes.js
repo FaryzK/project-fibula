@@ -6,6 +6,7 @@ const workflowController = require('../controllers/workflow.controller');
 const nodeController = require('../controllers/node.controller');
 const edgeController = require('../controllers/edge.controller');
 const runController = require('../controllers/run.controller');
+const flowInspectorController = require('../controllers/flowInspector.controller');
 
 router.use(authMiddleware, dbUserMiddleware);
 
@@ -32,5 +33,12 @@ router.delete('/:workflowId/edges/:edgeId', edgeController.remove);
 // Runs (nested under workflow)
 router.post('/:id/runs', runController.createRun);
 router.get('/:id/runs', runController.listRuns);
+
+// Flow Inspector
+router.get('/:workflowId/flow-inspector/summary', flowInspectorController.getSummary);
+router.get('/:workflowId/flow-inspector/nodes/:nodeId/documents', flowInspectorController.getNodeDocuments);
+router.get('/:workflowId/flow-inspector/orphaned', flowInspectorController.getOrphaned);
+router.delete('/:workflowId/flow-inspector/documents/:execId', flowInspectorController.deleteDocument);
+router.post('/:workflowId/flow-inspector/retrigger', flowInspectorController.retrigger);
 
 module.exports = router;

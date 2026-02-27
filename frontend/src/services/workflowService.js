@@ -49,8 +49,17 @@ export async function updateNode(workflowId, nodeId, fields) {
   return res.data;
 }
 
-export async function deleteNode(workflowId, nodeId) {
-  await api.delete(`/workflows/${workflowId}/nodes/${nodeId}`);
+export async function deleteNode(workflowId, nodeId, force = false) {
+  const url = `/workflows/${workflowId}/nodes/${nodeId}${force ? '?force=true' : ''}`;
+  try {
+    await api.delete(url);
+    return null;
+  } catch (err) {
+    if (err.response?.status === 409) {
+      return { heldCount: err.response.data.heldCount };
+    }
+    throw err;
+  }
 }
 
 export async function getEdges(workflowId) {
