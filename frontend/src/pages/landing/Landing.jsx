@@ -62,7 +62,7 @@ function Landing() {
 
       {/* Tabs */}
       <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6">
-        <nav className="flex gap-1 overflow-x-auto">
+        <nav className="flex gap-1 overflow-x-auto max-w-5xl mx-auto">
           {TABS.map((tab) => (
             <button
               key={tab.id}
@@ -81,13 +81,15 @@ function Landing() {
 
       {/* Tab content */}
       <main className="flex-1 p-6">
-        {activeTab === 'workflows' && <WorkflowsTab />}
-        {activeTab === 'splitting' && <SplittingTab />}
-        {activeTab === 'categorisation' && <CategorisationTab />}
-        {activeTab === 'document-folders' && <DocumentFoldersTab />}
-        {activeTab === 'extractors' && <ExtractorsTab />}
-        {activeTab === 'data-mapper' && <DataMapperTab />}
-        {activeTab === 'reconciliation' && <ReconciliationTab />}
+        <div className="max-w-5xl mx-auto">
+          {activeTab === 'workflows' && <WorkflowsTab />}
+          {activeTab === 'splitting' && <SplittingTab />}
+          {activeTab === 'categorisation' && <CategorisationTab />}
+          {activeTab === 'document-folders' && <DocumentFoldersTab />}
+          {activeTab === 'extractors' && <ExtractorsTab />}
+          {activeTab === 'data-mapper' && <DataMapperTab />}
+          {activeTab === 'reconciliation' && <ReconciliationTab />}
+        </div>
       </main>
     </div>
   );
