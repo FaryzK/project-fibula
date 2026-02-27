@@ -45,7 +45,7 @@ async function getSplitPlan(fileBuffer, fileType, instructions, totalPages) {
           contentItem,
           {
             type: 'input_text',
-            text: `Splitting instructions: ${instructions}\nThis document has ${totalPages} page(s). Identify split points.`,
+            text: `Splitting instructions: ${instructions}\nThis document has ${totalPages} page(s). Identify split points and return valid JSON.`,
           },
         ],
       },

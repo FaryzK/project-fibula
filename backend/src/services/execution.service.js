@@ -72,11 +72,7 @@ async function processNode(node, metadata, workflowRunId, docExecutionId, workfl
         throw new Error(`Document ${metadata.document_id} not found`);
       }
       const subDocuments = await splittingService.processDocument(document, instruction.instructions);
-      return {
-        type: 'fanout',
-        subDocuments,
-        outputMetadata: { ...metadata, _split_count: subDocuments.length, _split_labels: subDocuments.map((s) => s.label) },
-      };
+      return { type: 'fanout', subDocuments };
     }
 
     case 'CATEGORISATION': {
@@ -355,6 +351,7 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
         currentNodeId: null,
       });
 
+      const childDocIds = [];
       for (const subDoc of result.subDocuments) {
         const newDoc = await documentModel.create({
           userId: workflowUserId,
@@ -362,6 +359,8 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
           fileUrl: subDoc.file_url,
           fileType: subDoc.file_type,
         });
+
+        childDocIds.push(newDoc.id);
 
         const newExec = await documentExecutionModel.createMany(workflowRunId, [newDoc.id]);
 
@@ -375,6 +374,13 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
           startQueue: nextNodes,
         });
       }
+
+      // Update the log with child document IDs (no parent doc_id — parent stops here)
+      await documentExecutionModel.updateLog(log.id, {
+        status: 'completed',
+        outputMetadata: { split_count: childDocIds.length, child_document_ids: childDocIds },
+      });
+
       return;
     }
 
