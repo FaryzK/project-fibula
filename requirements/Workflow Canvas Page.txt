@@ -117,6 +117,8 @@ In a published workflow, each document upload creates its own workflow run and i
 
 The sequential outer loop only matters when multiple documents are uploaded together in a single manual run.
 
+On server startup, any document_executions left in 'processing' status and any workflow_runs left in 'running' status from a previous server session are automatically marked as 'failed'. This handles the case where the server was restarted or crashed mid-execution, preventing ghost documents from appearing in the Flow Inspector or canvas status badges.
+
 
 ---
 
