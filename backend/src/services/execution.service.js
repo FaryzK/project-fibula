@@ -375,10 +375,10 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
         });
       }
 
-      // Update the log with the actual child document IDs so the panel shows them
+      // Update the log with child document IDs (no parent doc_id — parent stops here)
       await documentExecutionModel.updateLog(log.id, {
         status: 'completed',
-        outputMetadata: { ...metadata, _child_document_ids: childDocIds, _split_count: childDocIds.length },
+        outputMetadata: { split_count: childDocIds.length, child_document_ids: childDocIds },
       });
 
       return;
