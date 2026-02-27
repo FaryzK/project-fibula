@@ -51,7 +51,7 @@ All feature specs live in `/requirements/`. **Always read the relevant file befo
 - Open a PR and merge into main when the phase is complete and tests pass
 - Never commit directly to main
 - After pushing or merging a phase branch, update the phase status table in `MEMORY.md`
-- When a requirements file in `/requirements/` is created or updated, commit and push it alongside the related code changes — requirements and implementation should stay in sync
+- Whenever a requirements file in `/requirements/` is created or updated, update the requirements table in this file (CLAUDE.md) to reflect the change before pushing
 
 ## Commit Message Convention (Conventional Commits)
 Format: `<type>: <short description>`
