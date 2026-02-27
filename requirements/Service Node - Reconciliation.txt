@@ -1,4 +1,4 @@
-There are 5 classes of nodes, and each class has a different usage. This document covers service node - reconciliation node
+There are 5 classes of nodes, and each class has a different usage. This document covers the service node - reconciliation node.
 
 Trigger node
 Example: manual upload
@@ -16,56 +16,166 @@ Webhook node (mainly used for sending events when something happens)
 
 HTTP node (mainly used for exporting data)
 
- 
 
-The reconciliation node is a type of service node that auto-reconciles documents. All documents passing through it will go through a process called reconciliation, where documents are matched and compared using logic defined by the user. The node accepts a document and extracted metadata as input, reconciles it, and outputs the document with an added "successfully reconciled" status. Documents not successfully reconciled will be held in the reconciliation service until they are resolved or removed from the workflow.
+---
 
-1. Creating a New Rule & Defining the Expected Documents
-To use the reconciliation node, the user first has to set it up. On the reconciliation landing page, they can view existing rules or press New Rule.
+RECONCILIATION NODE (Canvas)
 
-When a user clicks "New Rule", they must define two foundational elements:
+The reconciliation node is a type of service node that reconciles documents against a set of rules defined by the user.
 
-- The Anchor: This refers to the primary document type (derived from a specific extractor) around which the matching set is built. For example, if a PO extractor and an Invoice extractor are feeding documents into the node, the user should select the PO extractor as the Anchor, as it is the overarching source of truth.
+Node Configuration (Slot-Based)
+The reconciliation node does NOT hold a reference to a reconciliation rule. Instead, the node is configured with a list of extractor slots — one per document type expected. For example, a node processing PO + Invoice + Credit Note would have three slots, each labeled with the extractor name.
 
-- The Target Documents: The user must also select the other document extractors they are expecting in this workflow (e.g., Invoices, Delivery Notes, or Credit Notes). This tells the system exactly which document types need to be gathered alongside the Anchor to form a complete Matching Set.
+On the canvas, each slot appears as a labeled input port. The user connects the appropriate upstream extractor or processing node to the correct labeled port. This tells the system which document is which as it arrives at the node.
 
-2. Defining Rule Variations (The Waterfall Logic)
-Real-world document data is often messy or missing. To handle this, a Reconciliation Rule is made up of one or more Variations.
+All documents arriving at the node are held regardless of type. The node has one output port per input slot; documents exit only when fully reconciled (all comparisons resolved for at least one variation).
 
-A Variation is a complete, end-to-end setup path. The system will attempt to use Variation 1. If data is missing and it fails to find a match, the system will fall back to Variation 2, and so on.
+If a document is not successfully reconciled, it remains held inside the reconciliation service until it is resolved or manually removed.
 
-For each Variation, the user must define three sequential steps: Document Matching, Table Matching, and Comparison Logic.
 
-Step A: Document Matching Logic (Finding the Documents) This defines how the system links incoming documents to the Anchor to build a "Matching Set".
+---
 
-- The user creates Matching Links by pairing fields. For example, linking the PO_Number field from the PO to the Order_Reference field on the Invoice.
+RECONCILIATION SERVICE
 
-- A matching link can comprise multiple criteria. If a PO number isn't reliable, a variation could link documents by matching the VendorName AND the Date.
+The reconciliation service manages rules, matching sets, and the comparison lifecycle independently of the node.
 
-- Users can configure these links to require an Exact Match or a Fuzzy Match (including adjusting the percentage threshold to account for typos, like matching "Acme Corp" to "Acme Corporation").
+1. Creating a New Rule
 
-Step B: Table Matching Logic (Linking the Rows) Once the documents are gathered into a set, the system needs to know how to align the tabular data (line items) inside them.
+On the Reconciliation landing page, users can view existing rules or press New Rule. When creating a rule, the user defines:
 
-- The user defines a Table Matching Key by linking specific column identifiers. For example, mapping the PO_Table Part Number column in the PO to the Invoice_Table Item SKU column in the Invoice. Do note that the PO_Table and Invoice_Table are the table types found in the extracted schema. Do note that 1 document can have multiple table types. The reason why we have table type is that there can be tables that are fragmented so instead of 100 separate table of the same columns, we just want to see 1 table type where rows of all 100 tables exists, making life easier for us.
+- Rule name
+- Anchor extractor: the primary document type that acts as the source of truth (e.g. Purchase Order). One matching set is created per anchor document.
+- Target extractors: the other document types expected alongside the anchor (e.g. Invoice, Credit Note). Multiple targets can be defined.
+- Auto send-out toggle: if enabled, the system automatically sends out the anchor document the moment all comparisons for at least one variation are resolved. If disabled, the user manually triggers send-out.
 
-- This ensures that when the system compares prices later, it is strictly comparing the exact same items, regardless of what order they appear on the page.
+2. Defining Variations
 
-Step C: Comparison Logic (Evaluating the Data) After the documents and rows are successfully linked via the steps above, the system runs the Comparison Logic. Because a document might not be directly linked to another (e.g., an Invoice and a Credit Note), they are compared holistically within the overarching Matching Set.
+A reconciliation rule contains one or more Variations. All variations run in parallel — the system does not fall back from one to another. The user can freely toggle between variation results in the UI.
 
-Users can set up two types of comparison logic using Formula Expressions:
+Each variation is an independent end-to-end setup that defines three things:
 
-- Header-Level Comparison: Verifies document-wide totals. Instead of a simple one-to-one match, the user can build formulas. For example: (Invoice Grand Total - Credit Note Amount) = PO Grand Total. This ensures negative balances are netted off.
+Step A: Header Linking (Finding Documents)
+Defines how documents in the same matching set are linked at the document (header) level. Links are defined by pairing fields across document types.
 
-- Table-Level Comparison: Compares the specific row values that were aligned in Step B. For instance, the user can define logic stating: Invoice Unit Price = PO Unit Price, or (Invoice Quantity - Credit Note Quantity) = PO Quantity.
+- Example: link PO.PO_Number to Invoice.Order_Reference
+- Links can be transitive: PO ↔ Invoice via PO#, then Invoice ↔ Credit Note via Invoice Number. There is no requirement for a direct PO ↔ Credit Note link.
+- A link can require an Exact Match or a Fuzzy Match (with a configurable percentage threshold to handle typos, e.g. "Acme Corp" vs "Acme Corporation").
 
-Applying Tolerances For every comparison formula, the user can apply a Tolerance. This allows the system to auto-reconcile documents even if there are slight financial discrepancies (like rounding errors). The user can set an Absolute Tolerance (e.g., accepting a difference up to $0.50) or a Percentage-Based Tolerance (e.g., accepting a 1% variance on the total amount).
+Step B: Table Column Normalisation (Row Matching)
+Defines how to align rows across tables in linked documents.
 
-After a user has setup a reconciliation rule, the node can be used. In the workflow, when a reconciliation node is added, a user can add a reconciliation rule. The node accepts as many inputs as defined by the rule based on the anchor and number of target documents. If the rule accepts PO as anchor and an invoice as a target document, then there can only be 2 inputs which accepts a PO document, and an Invoice document. When a user opens reconciliation node, he sees the input documents, and its extracted metadata, the reconciliation rule, and also the output which are the successfully reconciled documents. Do note that when we are matching and comparing documents we are using the extracted data. 
+- The user maps column identifiers across document types. Example: PO_table.Part_Number ↔ Invoice_table.Item_SKU.
+- A document can have multiple table types. A table type groups rows from multiple physical page tables of the same schema so that they appear as one unified table.
+- Keys can be chained: PO ↔ Invoice via Item Code, Invoice ↔ Credit Note via Item Code. No direct PO ↔ Credit Note key is required.
 
-In the workflow, when a reconciliation node is added, the node on the canvas displays a labeled input port for each expected document type as defined by the rule. For example, if the rule has a PO as anchor and Invoice and Delivery Note as target documents, the node will show three labeled in-ports: "PO", "Invoice", and "Delivery Note". The user connects the appropriate upstream nodes to the correct labeled ports so the system knows which document is which.
+Step C: Comparison Expressions (Evaluating Data)
+After documents and rows are linked, the system evaluates comparison expressions. Comparisons are grouped into two levels:
 
-Users can access the service from the node by clicking on it. It will direct them to the reconciliation rule. In the reconciliation rule, the first screen shows the list of matching sets with the anchor as one of the column. Clicking on a matching set, users will see the documents that are matched for one variation and outcome of comparison. They can change the view to look at different variation of outcome of matching and comparison.
+Header-Level Comparison
+Compares document-wide fields. Expressions reference extractor fields using dot notation:
 
-Here if comparison is successful, the cells where we display the values we are comparing to be green. Else, there will be some errors. Users can either force reconcile or reject it. Force reconcile will update the comparison to reconciled, and reject will just reject the comparison until maybe a credit note comes into the matching set, rerun the comparison and either force reconcile or reject it again if there are issues.
+  Extractor Name.FieldName
 
-Once all the comparison is green, the documents will be automatically output from the node
+Example: (Invoice.Grand_Total - Credit_Note.Credit_Total) == PO.Grand_Total
+
+Table-Level Comparison
+Compares row-level values aligned via Step B. Expressions use three-part dot notation:
+
+  Extractor Name.TableName.ColumnName
+
+Example: PO_Extractor.PO_table.Total == Invoice_Extractor.Invoice_Table.Total - Credit_Note_Extractor.Credit_Note_Table.Amount
+
+Missing rows: if a non-anchor document has no matching row for a given anchor row, all column values for that document default to 0 in the comparison. This means a formula like PO.total = Invoice.total - CreditNote.total still evaluates correctly when no Credit Note row exists (CreditNote.total = 0).
+
+Tolerances
+For every comparison expression, the user can apply a tolerance:
+- Absolute tolerance: accept a difference up to a fixed amount (e.g. $0.50)
+- Percentage-based tolerance: accept a variance up to a percentage of the expected value (e.g. 1%)
+
+A built-in floating-point epsilon (1e-9) is applied before user-defined tolerances to handle rounding artefacts in arithmetic.
+
+
+---
+
+MATCHING SETS
+
+One matching set represents: one anchor document × one variation.
+
+If a rule has 3 variations and 5 anchor documents have arrived, there are up to 15 matching sets (5 anchors × 3 variations). Each variation's matching set for the same anchor is evaluated independently.
+
+When a new document arrives, the system retroactively checks the held document pool and adds any earlier compatible documents to the new document's matching set (and vice versa).
+
+Matching Set Lifecycle
+- Comparisons within a set are evaluated automatically when all required documents are present.
+- Comparisons can be re-evaluated at any time using the Re-evaluate action.
+- An anchor document is considered fully reconciled when at least one variation's matching set has all comparisons resolved (auto or force).
+- Once fully reconciled (and auto send-out is on), or once the user manually sends out the anchor, the document exits the node.
+
+
+---
+
+COMPARISON STATES
+
+Each individual comparison (header field or table row) has one of three states:
+
+- Pending: the comparison has not yet been resolved (values do not match within tolerance, or documents are still missing).
+- Auto: the system automatically resolved the comparison (values matched within tolerance).
+- Force: the user manually approved the comparison despite it not meeting the tolerance threshold.
+
+Actions available per comparison:
+- Force reconcile: user approves a pending comparison. Updates its state to Force.
+- Reject: removes the target document from all matching sets globally and marks it as rejected. If the anchor document is rejected, it is also removed at the anchor level.
+- Leave pending: no action; wait for a better document to arrive (e.g. a corrected invoice).
+
+Once all comparisons in a matching set are either Auto or Force, the documents in that set are eligible for send-out.
+
+
+---
+
+DOCUMENT STATES
+
+Documents in the reconciliation service have one of three statuses:
+
+- Held: in the system, not yet reconciled or sent out.
+- Reconciled: the anchor has been sent out. A copy of the record is kept so other rules can still reference it as a target document.
+- Rejected: removed from all matching sets. If it was an anchor, it is also marked rejected at the anchor level.
+
+A document can be the anchor in one rule and a target in another simultaneously.
+
+Many-to-Many Document Relationships
+Documents can participate in multiple rules at the same time. For example, an Invoice might be the anchor in an "Invoice ↔ Credit Note" reconciliation rule while also being a target document in a "PO ↔ Invoice" rule. Sending out (reconciling) a document in one rule does not remove it from other rules — its status becomes Reconciled, but it remains visible and usable as a target in any other rule that references it. This allows the same physical document to be reconciled independently across multiple rule contexts without needing to re-upload or duplicate it.
+
+
+---
+
+UI STRUCTURE (Reconciliation Tab)
+
+The Reconciliation landing page has two sub-tabs:
+
+1. Anchor Documents
+Filtered by selected rule. Shows each anchor document and its overall status (Open / Fully Reconciled). Clicking an anchor opens its detail page.
+
+Anchor Detail Page:
+- Variation toggle at the top to switch between variations for the same anchor.
+- Per variation: the matching set table (all linked documents), comparison table (header and row comparisons with their states), and action buttons (Force Reconcile / Reject / Leave Pending).
+- A Re-evaluate button appears when the matching set exists and any comparison is still Pending. Clicking it re-runs all comparison expressions against current data without re-running the workflow.
+- When all comparisons are Auto or Force, comparison cells are displayed in green. Pending comparisons are highlighted.
+- Adding a document to a matching set: only documents already held in the reconciliation service (arrived via workflow) can be added. Uploading arbitrary files directly is not supported.
+
+2. Documents
+Global list of all held, reconciled, and rejected documents across all rules. Each row shows:
+- Document name and status badge (Held / Reconciled / Rejected)
+- Source: which workflow and which reconciliation node it came from
+- Which input slot (extractor label) it arrived on
+- Matching sets it belongs to: first few shown, remainder truncated with "+N more" (expandable)
+
+
+---
+
+RECONCILIATION NODE IN THE WORKFLOW
+
+When a reconciliation node is added to the canvas:
+- The user configures the node's extractor slots (document types it expects).
+- Input ports are labeled with the extractor names. The user connects upstream nodes to the correct ports.
+- Opening the node from the canvas navigates to the Reconciliation tab, filtered to that node's documents.
+- Documents that exit the node (fully reconciled) carry their metadata and a "successfully reconciled" status tag, and flow to downstream nodes.
