@@ -203,7 +203,7 @@ const useCanvasStore = create((set, get) => ({
     const { pollInterval } = get();
     if (pollInterval) clearInterval(pollInterval);
 
-    const interval = setInterval(async () => {
+    const doPoll = async () => {
       try {
         const [runRes, statusRes] = await Promise.all([
           executionService.getRun(runId),
@@ -226,7 +226,11 @@ const useCanvasStore = create((set, get) => ({
       } catch (_) {
         // Silently ignore polling errors
       }
-    }, 2000);
+    };
+
+    // Poll immediately so fast nodes (categorisation) still get their status captured
+    doPoll();
+    const interval = setInterval(doPoll, 2000);
 
     set({ pollInterval: interval });
   },
