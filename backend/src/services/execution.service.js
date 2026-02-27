@@ -373,7 +373,7 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
 
         const nextNodes = (graph[nodeId] || []).map((e) => ({
           nodeId: e.targetNodeId,
-          metadata: { document_id: newDoc.id, label: subDoc.label, parent_document_id: metadata.document_id },
+          metadata: { document_id: newDoc.id, split_label: subDoc.label, parent_document_id: metadata.document_id },
         }));
 
         // Pre-create processing logs for all immediate downstream nodes so the canvas
