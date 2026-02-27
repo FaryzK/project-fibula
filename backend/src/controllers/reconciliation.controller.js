@@ -344,7 +344,7 @@ module.exports = {
       );
 
       const setDocsWithMeta = await reconciliationModel.findSetDocsWithMetadata(req.params.setId);
-      await runAndRecordComparisons(req.params.setId, variation, setDocsWithMeta, allExtractors);
+      await runAndRecordComparisons(req.params.setId, rule, variation, setDocsWithMeta, allExtractors);
 
       // Check if now fully reconciled
       const fullyReconciled = await reconciliationModel.isVariationFullyReconciled(req.params.setId, variation.id);

@@ -89,62 +89,56 @@ function evalFormula(formula, context) {
 }
 
 /**
- * Run a single comparison_rule against the set of docs.
- * Returns { passed: boolean }
+ * Sanitize a raw name (extractor, table, or column) for use as a JS identifier in the VM.
  */
-async function runSingleComparison(compRule, setDocs, extractors) {
-  if (!compRule.formula) return { passed: true };
+function sanitizeName(name) {
+  return String(name).replace(/[^a-zA-Z0-9_$]/g, '_');
+}
 
-  // Build context: sanitize both extractor names AND header field names (both can have spaces).
-  // Spaces/special chars → underscores so everything is a valid JS identifier in the VM.
-  const context = {};
-  const nameToSanitized = {};
-  const fieldNameMaps = {}; // sanitizedExtractorName → { 'Original Field': 'Original_Field' }
-  for (const doc of setDocs) {
-    const docExec = await documentExecutionModel.findById(doc.document_execution_id);
-    const meta = typeof docExec?.metadata === 'object' ? docExec.metadata : JSON.parse(docExec?.metadata || '{}');
-    const extractor = extractors.find((e) => e.id === doc.extractor_id);
-    if (extractor) {
-      const sanitizedName = extractor.name.replace(/[^a-zA-Z0-9_$]/g, '_');
-      nameToSanitized[extractor.name] = sanitizedName;
-      const header = meta.header || meta;
-      const sanitizedHeader = {};
-      const fieldMap = {};
-      for (const [key, val] of Object.entries(header)) {
-        const sanitizedKey = key.replace(/[^a-zA-Z0-9_$]/g, '_');
-        sanitizedHeader[sanitizedKey] = val;
-        if (key !== sanitizedKey) fieldMap[key] = sanitizedKey;
-      }
-      context[sanitizedName] = sanitizedHeader;
-      if (Object.keys(fieldMap).length > 0) fieldNameMaps[sanitizedName] = fieldMap;
-    }
-  }
-
-  if (compRule.level !== 'header') return { passed: true }; // skip table-level for MVP
-
-  // Rewrite formula in three passes:
-  //   1. Replace extractor names (longest first to avoid partial matches)
-  //   2. Replace field names that had spaces (e.g. "Credit Total" → "Credit_Total")
-  //   3. Normalise lone = to == (leaves ==, !=, <=, >= untouched)
-  let formula = compRule.formula;
+/**
+ * Rewrite a formula string in 3 passes so it can be evaluated in a VM context
+ * where all names have been sanitized.
+ *
+ * nameToSanitized: { 'PO Extractor': 'PO_Extractor', ... }
+ * tableNameMaps:   { 'PO_Extractor': { 'PO table': 'PO_table', ... }, ... }
+ * fieldNameMaps:   { 'PO_Extractor': { 'Credit Total': 'Credit_Total', ... }, ... }
+ *                  (also used for column names in table contexts)
+ */
+function rewriteFormula(formula, nameToSanitized, tableNameMaps, fieldNameMaps) {
+  // Pass 1: extractor names (longest first)
   const sortedNames = Object.keys(nameToSanitized).sort((a, b) => b.length - a.length);
-  for (const origName of sortedNames) {
-    formula = formula.split(origName).join(nameToSanitized[origName]);
+  for (const orig of sortedNames) {
+    formula = formula.split(orig).join(nameToSanitized[orig]);
   }
-  for (const [sanitizedExtractor, fieldMap] of Object.entries(fieldNameMaps)) {
-    const sortedFields = Object.keys(fieldMap).sort((a, b) => b.length - a.length);
-    for (const origField of sortedFields) {
-      formula = formula.split(`${sanitizedExtractor}.${origField}`).join(`${sanitizedExtractor}.${fieldMap[origField]}`);
+  // Pass 2: table names (longest first, scoped by sanitized extractor name)
+  for (const [sanitizedExtractor, tMap] of Object.entries(tableNameMaps || {})) {
+    const sortedTables = Object.keys(tMap).sort((a, b) => b.length - a.length);
+    for (const origTable of sortedTables) {
+      formula = formula
+        .split(`${sanitizedExtractor}.${origTable}`)
+        .join(`${sanitizedExtractor}.${tMap[origTable]}`);
     }
   }
-  // (?<![=!<>])=(?!=) matches a lone = only; leaves ==, !=, <=, >= untouched.
+  // Pass 3: field/column names (scoped by sanitized extractor name, longest first)
+  for (const [sanitizedExtractor, fMap] of Object.entries(fieldNameMaps || {})) {
+    const sortedFields = Object.keys(fMap).sort((a, b) => b.length - a.length);
+    for (const origField of sortedFields) {
+      formula = formula
+        .split(`${sanitizedExtractor}.${origField}`)
+        .join(`${sanitizedExtractor}.${fMap[origField]}`);
+    }
+  }
+  // Pass 4: lone = → == (leaves ==, !=, <=, >= untouched)
   formula = formula.replace(/(?<![=!<>])=(?!=)/g, '==');
+  return formula;
+}
 
+/**
+ * Evaluate a formula with epsilon + user tolerance fallback.
+ * Returns boolean.
+ */
+function evalWithTolerance(formula, context, compRule) {
   let result = evalFormula(formula, context);
-
-  // Floating-point fallback: when == returns false but both sides are numeric,
-  // check with a tiny epsilon first (handles cases like 934.2 - 59.4 = 874.8000000000001),
-  // then apply user-defined tolerance if set.
   if (!result) {
     const match = formula.match(/^(.+?)\s*==\s*(.+)$/);
     if (match) {
@@ -154,7 +148,6 @@ async function runSingleComparison(compRule, setDocs, extractors) {
         const rightVal = Number(vm.runInContext(match[2].trim(), ctx, { timeout: 100 }));
         if (!isNaN(leftVal) && !isNaN(rightVal)) {
           const diff = Math.abs(leftVal - rightVal);
-          // Built-in epsilon for floating-point rounding errors (e.g. 934.2 - 59.4 ≠ 874.8 in float64)
           if (diff <= 1e-9) {
             result = true;
           } else if (compRule.tolerance_value != null) {
@@ -168,8 +161,238 @@ async function runSingleComparison(compRule, setDocs, extractors) {
       } catch (_) { /* leave result as false */ }
     }
   }
+  return result;
+}
 
-  return { passed: result };
+/**
+ * Build an array of row groups by BFS-joining from anchor extractor outward.
+ * Each group: { [extractorId]: { [tableType]: rowObject | null } }
+ * A null entry means no matching row was found in that doc (value defaults to 0 at eval time).
+ */
+function buildRowGroups(anchorExtractorId, setDocs, tableMatchingKeys) {
+  if (!tableMatchingKeys || tableMatchingKeys.length === 0) return [];
+
+  // Build tableRows index: `${extractorId}.${tableType}` → rows[]
+  const tableRows = {};
+  for (const doc of setDocs) {
+    const tables = doc.metadata?.tables || {};
+    for (const [tableName, rows] of Object.entries(tables)) {
+      if (Array.isArray(rows)) {
+        tableRows[`${doc.extractor_id}.${tableName}`] = rows;
+      }
+    }
+  }
+
+  // Find anchor's table type: look for a key where anchor is on either side
+  const anchorKey = tableMatchingKeys.find(
+    (k) => k.left_extractor_id === anchorExtractorId || k.right_extractor_id === anchorExtractorId
+  );
+  if (!anchorKey) return [];
+
+  const anchorOnLeft = anchorKey.left_extractor_id === anchorExtractorId;
+  const anchorTableType = anchorOnLeft ? anchorKey.left_table_type : anchorKey.right_table_type;
+  const anchorKeyCol = anchorOnLeft ? anchorKey.left_column : anchorKey.right_column;
+  const anchorRows = tableRows[`${anchorExtractorId}.${anchorTableType}`] || [];
+  if (anchorRows.length === 0) return [];
+
+  const groups = [];
+  for (const anchorRow of anchorRows) {
+    const group = { [anchorExtractorId]: { [anchorTableType]: anchorRow } };
+    const matched = new Set([anchorExtractorId]);
+
+    // BFS: keep following keys until no more new extractors can be added
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const key of tableMatchingKeys) {
+        const leftMatched = matched.has(key.left_extractor_id);
+        const rightMatched = matched.has(key.right_extractor_id);
+        if (leftMatched === rightMatched) continue; // both done or neither done — skip
+
+        if (leftMatched) {
+          // Use left side's already-matched row to look up right side
+          const leftRow = group[key.left_extractor_id]?.[key.left_table_type] || {};
+          const keyVal = leftRow[key.left_column];
+          const candidates = tableRows[`${key.right_extractor_id}.${key.right_table_type}`] || [];
+          const found = keyVal != null
+            ? candidates.find((r) => String(r[key.right_column]) === String(keyVal)) || null
+            : null;
+          if (!group[key.right_extractor_id]) group[key.right_extractor_id] = {};
+          group[key.right_extractor_id][key.right_table_type] = found;
+          matched.add(key.right_extractor_id);
+          changed = true;
+        } else {
+          // Use right side's already-matched row to look up left side
+          const rightRow = group[key.right_extractor_id]?.[key.right_table_type] || {};
+          const keyVal = rightRow[key.right_column];
+          const candidates = tableRows[`${key.left_extractor_id}.${key.left_table_type}`] || [];
+          const found = keyVal != null
+            ? candidates.find((r) => String(r[key.left_column]) === String(keyVal)) || null
+            : null;
+          if (!group[key.left_extractor_id]) group[key.left_extractor_id] = {};
+          group[key.left_extractor_id][key.left_table_type] = found;
+          matched.add(key.left_extractor_id);
+          changed = true;
+        }
+      }
+    }
+    groups.push(group);
+  }
+  return groups;
+}
+
+/**
+ * Extract which columns of each (sanitizedExtractor.sanitizedTable) are referenced
+ * in the sanitized formula. Used to build zero-fallback rows for missing docs.
+ * Returns: { 'ExtName.TableName': ['Col1', 'Col2'] }
+ */
+function extractColRefs(sanitizedFormula) {
+  const refs = {};
+  const regex = /(\w+)\.(\w+)\.(\w+)/g;
+  let m;
+  while ((m = regex.exec(sanitizedFormula)) !== null) {
+    const key = `${m[1]}.${m[2]}`;
+    if (!refs[key]) refs[key] = [];
+    if (!refs[key].includes(m[3])) refs[key].push(m[3]);
+  }
+  return refs;
+}
+
+/**
+ * Evaluate a table-level comparison rule against the matched row groups.
+ * Returns { passed: boolean }
+ */
+function runTableComparison(compRule, anchorExtractorId, setDocs, extractors, tableMatchingKeys) {
+  const rowGroups = buildRowGroups(anchorExtractorId, setDocs, tableMatchingKeys);
+  if (rowGroups.length === 0) return { passed: true }; // nothing to compare
+
+  // Build nameToSanitized, tableNameMaps, fieldNameMaps for the row context.
+  // tableNameMaps is built from tableMatchingKeys so that even empty tables get their
+  // names sanitized (empty arrays would be skipped if we relied on row data alone).
+  const nameToSanitized = {};
+  const tableNameMaps = {};  // sanitizedExtractor → { 'Original Table': 'Original_Table' }
+  const colNameMaps = {};    // 'sanitizedExtractor.sanitizedTable' → { 'Original Col': 'Original_Col' }
+
+  // Step A: extractor names from setDocs
+  for (const doc of setDocs) {
+    const extractor = extractors.find((e) => e.id === doc.extractor_id);
+    if (!extractor) continue;
+    nameToSanitized[extractor.name] = sanitizeName(extractor.name);
+  }
+
+  // Step B: table names from tableMatchingKeys (handles empty tables correctly)
+  for (const key of (tableMatchingKeys || [])) {
+    for (const [extId, tableType] of [
+      [key.left_extractor_id, key.left_table_type],
+      [key.right_extractor_id, key.right_table_type],
+    ]) {
+      const extractor = extractors.find((e) => e.id === extId);
+      if (!extractor) continue;
+      const sanitizedExt = sanitizeName(extractor.name);
+      const sanitizedTable = sanitizeName(tableType);
+      if (tableType !== sanitizedTable) {
+        if (!tableNameMaps[sanitizedExt]) tableNameMaps[sanitizedExt] = {};
+        tableNameMaps[sanitizedExt][tableType] = sanitizedTable;
+      }
+    }
+  }
+
+  // Step C: column names from actual rows (only non-empty tables have sample rows)
+  for (const doc of setDocs) {
+    const extractor = extractors.find((e) => e.id === doc.extractor_id);
+    if (!extractor) continue;
+    const sanitizedExt = sanitizeName(extractor.name);
+    const tables = doc.metadata?.tables || {};
+    for (const [tableName, rows] of Object.entries(tables)) {
+      if (!Array.isArray(rows) || rows.length === 0) continue;
+      const sanitizedTable = sanitizeName(tableName);
+      const mapKey = `${sanitizedExt}.${sanitizedTable}`;
+      if (!colNameMaps[mapKey]) colNameMaps[mapKey] = {};
+      for (const colName of Object.keys(rows[0])) {
+        const sanitizedCol = sanitizeName(colName);
+        if (colName !== sanitizedCol) colNameMaps[mapKey][colName] = sanitizedCol;
+      }
+    }
+  }
+
+  // Rewrite formula once (shared across all row groups)
+  const rewrittenFormula = rewriteFormula(compRule.formula, nameToSanitized, tableNameMaps, colNameMaps);
+  const colRefs = extractColRefs(rewrittenFormula);
+
+  for (const group of rowGroups) {
+    // Build the per-row VM context
+    const context = {};
+    for (const [extractorId, tableMap] of Object.entries(group)) {
+      const extractor = extractors.find((e) => e.id === extractorId);
+      if (!extractor) continue;
+      const sanitizedExt = sanitizeName(extractor.name);
+      if (!context[sanitizedExt]) context[sanitizedExt] = {};
+
+      for (const [tableType, row] of Object.entries(tableMap)) {
+        const sanitizedTable = sanitizeName(tableType);
+        if (row === null) {
+          // Missing row — fill with 0 for all columns referenced in the formula
+          const zeros = {};
+          for (const col of colRefs[`${sanitizedExt}.${sanitizedTable}`] || []) {
+            zeros[col] = 0;
+          }
+          context[sanitizedExt][sanitizedTable] = zeros;
+        } else {
+          // Sanitize column names
+          const sanitizedRow = {};
+          for (const [col, val] of Object.entries(row)) {
+            sanitizedRow[sanitizeName(col)] = val;
+          }
+          context[sanitizedExt][sanitizedTable] = sanitizedRow;
+        }
+      }
+    }
+
+    const rowPassed = evalWithTolerance(rewrittenFormula, context, compRule);
+    if (!rowPassed) return { passed: false };
+  }
+
+  return { passed: true };
+}
+
+/**
+ * Run a single comparison_rule against the set of docs.
+ * Returns { passed: boolean }
+ */
+async function runSingleComparison(compRule, setDocs, extractors, tableMatchingKeys, anchorExtractorId) {
+  if (!compRule.formula) return { passed: true };
+
+  if (compRule.level === 'table') {
+    return runTableComparison(compRule, anchorExtractorId, setDocs, extractors, tableMatchingKeys || []);
+  }
+
+  // --- Header-level ---
+  // Build context: sanitize both extractor names AND header field names.
+  const context = {};
+  const nameToSanitized = {};
+  const fieldNameMaps = {}; // sanitizedExtractorName → { 'Original Field': 'Original_Field' }
+  for (const doc of setDocs) {
+    const docExec = await documentExecutionModel.findById(doc.document_execution_id);
+    const meta = typeof docExec?.metadata === 'object' ? docExec.metadata : JSON.parse(docExec?.metadata || '{}');
+    const extractor = extractors.find((e) => e.id === doc.extractor_id);
+    if (extractor) {
+      const sanitizedName = sanitizeName(extractor.name);
+      nameToSanitized[extractor.name] = sanitizedName;
+      const header = meta.header || meta;
+      const sanitizedHeader = {};
+      const fieldMap = {};
+      for (const [key, val] of Object.entries(header)) {
+        const sanitizedKey = sanitizeName(key);
+        sanitizedHeader[sanitizedKey] = val;
+        if (key !== sanitizedKey) fieldMap[key] = sanitizedKey;
+      }
+      context[sanitizedName] = sanitizedHeader;
+      if (Object.keys(fieldMap).length > 0) fieldNameMaps[sanitizedName] = fieldMap;
+    }
+  }
+
+  const formula = rewriteFormula(compRule.formula, nameToSanitized, {}, fieldNameMaps);
+  return { passed: evalWithTolerance(formula, context, compRule) };
 }
 
 /**
@@ -177,7 +400,7 @@ async function runSingleComparison(compRule, setDocs, extractors) {
  * Upserts comparison_results as 'auto' (passed) or 'pending' (failed).
  * Skips rules already marked 'force' (user-approved).
  */
-async function runAndRecordComparisons(matchingSetId, variation, setDocs, extractors) {
+async function runAndRecordComparisons(matchingSetId, rule, variation, setDocs, extractors) {
   if (!variation.comparison_rules || variation.comparison_rules.length === 0) return;
   for (const cr of variation.comparison_rules) {
     // Don't overwrite a force-reconciled result
@@ -188,7 +411,13 @@ async function runAndRecordComparisons(matchingSetId, variation, setDocs, extrac
     });
     if (existing.status === 'force') continue;
 
-    const { passed } = await runSingleComparison(cr, setDocs, extractors);
+    const { passed } = await runSingleComparison(
+      cr,
+      setDocs,
+      extractors,
+      variation.table_matching_keys || [],
+      rule.anchor_extractor_id,
+    );
     await reconciliationModel.upsertComparisonResult({
       matchingSetId,
       comparisonRuleId: cr.id,
@@ -241,7 +470,7 @@ async function finaliseSet(setId, rule, variation, allExtractors) {
   if (!expectedIds.every((id) => presentIds.has(id))) return { fullyReconciled: false, setDocs };
 
   const setDocsWithMeta = await reconciliationModel.findSetDocsWithMetadata(setId);
-  await runAndRecordComparisons(setId, variation, setDocsWithMeta, allExtractors);
+  await runAndRecordComparisons(setId, rule, variation, setDocsWithMeta, allExtractors);
 
   const fullyReconciled = await reconciliationModel.isVariationFullyReconciled(setId, variation.id);
   if (fullyReconciled) {

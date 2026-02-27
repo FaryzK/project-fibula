@@ -250,3 +250,197 @@ describe('Reconciliation Rule routes', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Service unit tests — table-level comparison logic
+// ---------------------------------------------------------------------------
+
+jest.mock('../../src/models/documentExecution.model');
+jest.mock('../../src/models/extractor.model');
+
+const { runSingleComparison } = require('../../src/services/reconciliation.service');
+
+const EXT_PO = { id: 'ext-po', name: 'PO Extractor' };
+const EXT_INV = { id: 'ext-inv', name: 'Invoice Extractor' };
+const EXT_CREDIT = { id: 'ext-credit', name: 'Credit Note Extractor' };
+
+const TABLE_KEYS_PO_INV = [
+  {
+    left_extractor_id: 'ext-po',
+    left_table_type: 'PO_table',
+    left_column: 'Item Code',
+    right_extractor_id: 'ext-inv',
+    right_table_type: 'Invoice Table',
+    right_column: 'Item Code',
+  },
+];
+
+const TABLE_KEYS_3WAY = [
+  ...TABLE_KEYS_PO_INV,
+  {
+    left_extractor_id: 'ext-inv',
+    left_table_type: 'Invoice Table',
+    left_column: 'Item Code',
+    right_extractor_id: 'ext-credit',
+    right_table_type: 'Credit Table',
+    right_column: 'Item Code',
+  },
+];
+
+describe('runSingleComparison — table level', () => {
+  const compRule = {
+    id: 'cr-tbl',
+    level: 'table',
+    formula: 'PO Extractor.PO_table.Total = Invoice Extractor.Invoice Table.Total',
+    tolerance_type: null,
+    tolerance_value: null,
+  };
+
+  it('passes when all rows match', async () => {
+    const setDocs = [
+      {
+        extractor_id: 'ext-po',
+        document_execution_id: 'exec-po',
+        metadata: {
+          tables: {
+            PO_table: [
+              { 'Item Code': 'A001', Total: '100.00' },
+              { 'Item Code': 'A002', Total: '200.00' },
+            ],
+          },
+        },
+      },
+      {
+        extractor_id: 'ext-inv',
+        document_execution_id: 'exec-inv',
+        metadata: {
+          tables: {
+            'Invoice Table': [
+              { 'Item Code': 'A001', Total: '100.00' },
+              { 'Item Code': 'A002', Total: '200.00' },
+            ],
+          },
+        },
+      },
+    ];
+    const { passed } = await runSingleComparison(compRule, setDocs, [EXT_PO, EXT_INV], TABLE_KEYS_PO_INV, 'ext-po');
+    expect(passed).toBe(true);
+  });
+
+  it('fails when one row does not match', async () => {
+    const setDocs = [
+      {
+        extractor_id: 'ext-po',
+        document_execution_id: 'exec-po',
+        metadata: {
+          tables: {
+            PO_table: [
+              { 'Item Code': 'A001', Total: '100.00' },
+              { 'Item Code': 'A002', Total: '200.00' },
+            ],
+          },
+        },
+      },
+      {
+        extractor_id: 'ext-inv',
+        document_execution_id: 'exec-inv',
+        metadata: {
+          tables: {
+            'Invoice Table': [
+              { 'Item Code': 'A001', Total: '100.00' },
+              { 'Item Code': 'A002', Total: '999.00' }, // mismatch
+            ],
+          },
+        },
+      },
+    ];
+    const { passed } = await runSingleComparison(compRule, setDocs, [EXT_PO, EXT_INV], TABLE_KEYS_PO_INV, 'ext-po');
+    expect(passed).toBe(false);
+  });
+
+  it('defaults missing non-anchor rows to 0 and evaluates correctly', async () => {
+    // Formula: PO.Total = Invoice.Total - CreditNote.Total
+    // PO row A001 Total=100, Invoice Total=100, no Credit Note row → Credit Note defaults to 0
+    // 100 = 100 - 0 → true
+    const rule3 = {
+      id: 'cr-3way',
+      level: 'table',
+      formula: 'PO Extractor.PO_table.Total = Invoice Extractor.Invoice Table.Total - Credit Note Extractor.Credit Table.Total',
+      tolerance_type: null,
+      tolerance_value: null,
+    };
+    const setDocs = [
+      {
+        extractor_id: 'ext-po',
+        document_execution_id: 'exec-po',
+        metadata: {
+          tables: {
+            PO_table: [{ 'Item Code': 'A001', Total: '100.00' }],
+          },
+        },
+      },
+      {
+        extractor_id: 'ext-inv',
+        document_execution_id: 'exec-inv',
+        metadata: {
+          tables: {
+            'Invoice Table': [{ 'Item Code': 'A001', Total: '100.00' }],
+          },
+        },
+      },
+      {
+        extractor_id: 'ext-credit',
+        document_execution_id: 'exec-credit',
+        metadata: {
+          tables: {
+            'Credit Table': [], // no rows — the A001 row has no credit note match
+          },
+        },
+      },
+    ];
+    const { passed } = await runSingleComparison(rule3, setDocs, [EXT_PO, EXT_INV, EXT_CREDIT], TABLE_KEYS_3WAY, 'ext-po');
+    expect(passed).toBe(true);
+  });
+
+  it('passes trivially when no table matching keys are defined', async () => {
+    const setDocs = [
+      {
+        extractor_id: 'ext-po',
+        document_execution_id: 'exec-po',
+        metadata: { tables: { PO_table: [{ 'Item Code': 'A001', Total: '100.00' }] } },
+      },
+    ];
+    const { passed } = await runSingleComparison(compRule, setDocs, [EXT_PO, EXT_INV], [], 'ext-po');
+    expect(passed).toBe(true);
+  });
+
+  it('handles floating-point row values correctly', async () => {
+    // 934.20 - 59.40 = 874.80 (float imprecision should be handled by epsilon)
+    const floatRule = {
+      id: 'cr-float',
+      level: 'table',
+      formula: 'PO Extractor.PO_table.Total = Invoice Extractor.Invoice Table.Total - Credit Note Extractor.Credit Table.Total',
+      tolerance_type: null,
+      tolerance_value: null,
+    };
+    const setDocs = [
+      {
+        extractor_id: 'ext-po',
+        document_execution_id: 'exec-po',
+        metadata: { tables: { PO_table: [{ 'Item Code': 'A001', Total: '874.80' }] } },
+      },
+      {
+        extractor_id: 'ext-inv',
+        document_execution_id: 'exec-inv',
+        metadata: { tables: { 'Invoice Table': [{ 'Item Code': 'A001', Total: '934.20' }] } },
+      },
+      {
+        extractor_id: 'ext-credit',
+        document_execution_id: 'exec-credit',
+        metadata: { tables: { 'Credit Table': [{ 'Item Code': 'A001', Total: '59.40' }] } },
+      },
+    ];
+    const { passed } = await runSingleComparison(floatRule, setDocs, [EXT_PO, EXT_INV, EXT_CREDIT], TABLE_KEYS_3WAY, 'ext-po');
+    expect(passed).toBe(true);
+  });
+});
