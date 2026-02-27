@@ -64,6 +64,7 @@ export default function AnchorDocDetail() {
   const { ruleId, anchorDocExecId } = useParams();
   const navigate = useNavigate();
   const extractors = useExtractorStore((s) => s.extractors);
+  const loadExtractors = useExtractorStore((s) => s.loadExtractors);
   const extractorMap = Object.fromEntries(extractors.map((e) => [e.id, e.name]));
 
   const [rule, setRule] = useState(null);
@@ -74,6 +75,11 @@ export default function AnchorDocDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
+
+  // Ensure extractors are loaded so we can resolve IDs → names
+  useEffect(() => {
+    if (extractors.length === 0) loadExtractors();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     async function load() {
@@ -281,7 +287,7 @@ export default function AnchorDocDetail() {
                             )}
                           </td>
                           <td className="px-4 py-2.5 text-gray-500 dark:text-gray-400 text-xs">
-                            {doc.extractor_id}
+                            {extractorMap[doc.extractor_id] || doc.extractor_id}
                           </td>
                           <td className="px-4 py-2.5">
                             <StatusBadge status="held" />
@@ -388,7 +394,6 @@ export default function AnchorDocDetail() {
                         </tr>
                         );
                       })}
-                      ))}
                     </tbody>
                   </table>
                 </div>
