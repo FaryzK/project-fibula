@@ -405,6 +405,7 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
       await documentExecutionModel.updateLog(log.id, {
         status: 'completed',
         outputMetadata: { split_count: childDocIds.length, child_document_ids: childDocIds },
+        outputPort: 'default',
       });
 
       // Mark parent as completed only after all children are in the queue
@@ -464,17 +465,20 @@ async function runWorkflow(workflowRunId) {
 
   const pendingExecQueue = initialExecs.map((e) => ({ docExecution: e, startQueue: null }));
 
+  // Process all pending execs in parallel batches — drain the queue each iteration
+  // so fanout children (or multiple trigger paths) run concurrently instead of sequentially.
   while (pendingExecQueue.length > 0) {
-    const { docExecution, startQueue } = pendingExecQueue.shift();
-    try {
-      await runDocument(docExecution, nodes, edges, graph, workflowRunId, pendingExecQueue, startQueue);
-    } catch (err) {
-      console.error(`runDocument failed for exec ${docExecution?.id}:`, err);
-      // Mark the individual exec as failed so the canvas shows ✕ instead of hanging
-      if (docExecution?.id) {
-        await documentExecutionModel.updateStatus(docExecution.id, { status: 'failed', currentNodeId: null }).catch(() => {});
-      }
-    }
+    const batch = pendingExecQueue.splice(0, pendingExecQueue.length);
+    await Promise.all(
+      batch.map(({ docExecution, startQueue }) =>
+        runDocument(docExecution, nodes, edges, graph, workflowRunId, pendingExecQueue, startQueue).catch((err) => {
+          console.error(`runDocument failed for exec ${docExecution?.id}:`, err);
+          if (docExecution?.id) {
+            return documentExecutionModel.updateStatus(docExecution.id, { status: 'failed', currentNodeId: null }).catch(() => {});
+          }
+        })
+      )
+    );
   }
 
   const allExecs = await documentExecutionModel.findByRunId(workflowRunId);
