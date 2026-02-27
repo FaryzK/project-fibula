@@ -177,11 +177,12 @@ async function processNode(node, metadata, workflowRunId, docExecutionId, workfl
     }
 
     case 'DATA_MAPPER': {
-      if (!config.rule_id) {
+      const dmRuleId = config.rule_id || config.data_map_rule_id;
+      if (!dmRuleId) {
         return { type: 'continue', outputMetadata: { ...metadata }, outputPort: 'default' };
       }
-      const rule = await dataMapperModel.findRuleById(config.rule_id);
-      if (!rule) throw new Error(`Data map rule ${config.rule_id} not found`);
+      const rule = await dataMapperModel.findRuleById(dmRuleId);
+      if (!rule) throw new Error(`Data map rule ${dmRuleId} not found`);
       const enrichedMetadata = await dataMapperService.applyRule(rule, metadata);
       return { type: 'continue', outputMetadata: enrichedMetadata, outputPort: 'default' };
     }

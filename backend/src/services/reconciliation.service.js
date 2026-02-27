@@ -1,5 +1,6 @@
 const reconciliationModel = require('../models/reconciliation.model');
 const documentExecutionModel = require('../models/documentExecution.model');
+const extractorModel = require('../models/extractor.model');
 const vm = require('vm');
 
 /**
@@ -185,11 +186,14 @@ async function processDocument({ docExecutionId, metadata, workflowId, nodeId, u
     const isAnchor = extractorId === rule.anchor_extractor_id;
     const isTarget = rule.target_extractors.some((t) => t.extractor_id === extractorId);
 
-    // Build extractor lookup for comparison context
-    const allExtractors = [
-      { id: rule.anchor_extractor_id, name: rule.name + '_anchor' },
-      ...rule.target_extractors.map((t) => ({ id: t.extractor_id, name: t.extractor_id })),
-    ];
+    // Build extractor lookup (id → real name) for comparison formula context
+    const allExtractorIds = [rule.anchor_extractor_id, ...rule.target_extractors.map((t) => t.extractor_id)];
+    const allExtractors = await Promise.all(
+      allExtractorIds.map(async (eid) => {
+        const ex = await extractorModel.findById(eid);
+        return { id: eid, name: ex?.name || eid };
+      })
+    );
 
     for (const variation of rule.variations) {
       if (isAnchor) {

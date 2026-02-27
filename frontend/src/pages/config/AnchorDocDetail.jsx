@@ -272,56 +272,68 @@ export default function AnchorDocDetail() {
           {/* Comparisons */}
           <div>
             <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Comparisons</h2>
-            {currentData.comparisons.length === 0 ? (
-              <p className="text-xs text-gray-400 dark:text-gray-500">
-                {currentData.docs.length === 0
-                  ? 'Waiting for all documents to arrive before running comparisons.'
-                  : 'No comparison rules defined for this variation.'}
-              </p>
-            ) : (
-              <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 dark:bg-gray-700/50">
-                    <tr className="text-xs text-gray-500 dark:text-gray-400">
-                      <th className="px-4 py-2 text-left font-medium">Formula</th>
-                      <th className="px-4 py-2 text-left font-medium">Level</th>
-                      <th className="px-4 py-2 text-left font-medium">Status</th>
-                      <th className="px-4 py-2"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                    {currentData.comparisons.map((comp) => (
-                      <tr key={comp.id} className="bg-white dark:bg-gray-800">
-                        <td className="px-4 py-2.5 font-mono text-xs text-gray-800 dark:text-gray-200">
-                          {comp.formula}
-                          {comp.tolerance_value != null && (
-                            <span className="ml-1.5 text-gray-400 dark:text-gray-500">
-                              (±{comp.tolerance_value}{comp.tolerance_type === 'percentage' ? '%' : ''})
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2.5 text-gray-500 dark:text-gray-400 capitalize text-xs">
-                          {comp.level}
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <StatusBadge status={comp.status} />
-                        </td>
-                        <td className="px-4 py-2.5 text-right">
-                          {comp.status === 'pending' && currentData.set && (
-                            <button
-                              onClick={() => handleForceReconcile(currentData.set.id, comp.comparison_rule_id)}
-                              className="text-xs text-blue-600 dark:text-blue-400 hover:underline transition"
-                            >
-                              Force reconcile
-                            </button>
-                          )}
-                        </td>
+            {(() => {
+              // Use actual results if available; otherwise fall back to the variation's defined rules shown as "waiting"
+              const definedRules = currentVariation?.comparison_rules || [];
+              const hasResults = currentData.comparisons.length > 0;
+              if (!hasResults && definedRules.length === 0) {
+                return (
+                  <p className="text-xs text-gray-400 dark:text-gray-500">No comparison rules defined for this variation.</p>
+                );
+              }
+              const rows = hasResults
+                ? currentData.comparisons
+                : definedRules.map((cr) => ({ ...cr, comparison_rule_id: cr.id, status: 'pending', _notEvaluated: true }));
+              return (
+                <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+                  {!hasResults && (
+                    <p className="px-4 py-2 text-xs text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/20 border-b border-yellow-200 dark:border-yellow-800">
+                      Waiting for all documents to arrive before comparisons are evaluated.
+                    </p>
+                  )}
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 dark:bg-gray-700/50">
+                      <tr className="text-xs text-gray-500 dark:text-gray-400">
+                        <th className="px-4 py-2 text-left font-medium">Formula</th>
+                        <th className="px-4 py-2 text-left font-medium">Level</th>
+                        <th className="px-4 py-2 text-left font-medium">Status</th>
+                        <th className="px-4 py-2"></th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                      {rows.map((comp) => (
+                        <tr key={comp.id || comp.comparison_rule_id} className="bg-white dark:bg-gray-800">
+                          <td className="px-4 py-2.5 font-mono text-xs text-gray-800 dark:text-gray-200">
+                            {comp.formula}
+                            {comp.tolerance_value != null && (
+                              <span className="ml-1.5 text-gray-400 dark:text-gray-500">
+                                (±{comp.tolerance_value}{comp.tolerance_type === 'percentage' ? '%' : ''})
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5 text-gray-500 dark:text-gray-400 capitalize text-xs">
+                            {comp.level}
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <StatusBadge status={comp.status} />
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            {comp.status === 'pending' && !comp._notEvaluated && currentData.set && (
+                              <button
+                                onClick={() => handleForceReconcile(currentData.set.id, comp.comparison_rule_id)}
+                                className="text-xs text-blue-600 dark:text-blue-400 hover:underline transition"
+                              >
+                                Force reconcile
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
           </div>
         </div>
       ) : (
