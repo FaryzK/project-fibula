@@ -230,6 +230,12 @@ module.exports = {
 
       await extractorModel.deleteHeld(req.params.heldId, req.params.id);
 
+      // Sync document_execution out of held state so Flow Inspector doesn't show it as held
+      await documentExecutionModel.updateStatus(held.document_execution_id, {
+        status: 'completed',
+        currentNodeId: null,
+      });
+
       if (docExec) {
         await cleanupDocument(docExec.document_id, meta.parent_document_id || null);
       }
