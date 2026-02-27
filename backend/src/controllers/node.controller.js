@@ -1,5 +1,6 @@
 const nodeModel = require('../models/node.model');
 const workflowModel = require('../models/workflow.model');
+const documentExecutionModel = require('../models/documentExecution.model');
 
 async function list(req, res, next) {
   try {
@@ -31,9 +32,26 @@ async function update(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// DELETE /api/workflows/:workflowId/nodes/:nodeId
+// Without ?force=true: returns 409 if the node has held documents (frontend shows warning).
+// With ?force=true: orphans held documents then deletes the node.
 async function remove(req, res, next) {
   try {
-    await nodeModel.remove(req.params.nodeId);
+    const { nodeId } = req.params;
+    const force = req.query.force === 'true';
+
+    const heldCount = await documentExecutionModel.countHeldAtNode(nodeId);
+
+    if (heldCount > 0 && !force) {
+      return res.status(409).json({ heldCount });
+    }
+
+    if (heldCount > 0) {
+      const node = await nodeModel.findById(nodeId);
+      await documentExecutionModel.orphanHeldDocs(nodeId, node?.name || 'Deleted node');
+    }
+
+    await nodeModel.remove(nodeId);
     res.status(204).send();
   } catch (err) { next(err); }
 }

@@ -15,6 +15,7 @@ import nodeTypes from '../../utils/nodeTypes';
 import NodePalette from '../../components/canvas/NodePalette';
 import NodePanel from '../../components/canvas/NodePanel';
 import RunModal from '../../components/canvas/RunModal';
+import FlowInspector from '../../components/canvas/FlowInspector';
 
 const RUN_STATUS_BANNER = {
   running:   { bg: 'bg-amber-50 border-amber-200 text-amber-800', label: '⟳ Running…' },
@@ -34,6 +35,8 @@ function CanvasInner() {
   const [pendingConnection, setPendingConnection] = useState(null); // { fromNodeId, fromHandleId, fromHandleType, position }
   const connectingNodeRef = useRef(null);
   const [runModalOpen, setRunModalOpen] = useState(false);
+  const [inspectorMode, setInspectorMode] = useState(false);
+  const [deleteWarning, setDeleteWarning] = useState(null); // { nodeId, heldCount } | null
 
   const {
     workflowName, isPublished, nodes, edges, loading,
@@ -119,9 +122,15 @@ function CanvasInner() {
     if (window.confirm('Delete this connection?')) deleteEdge(edge.id);
   }, [deleteEdge]);
 
-  const handleKeyDown = useCallback((e) => {
-    if ((e.key === 'Delete' || e.key === 'Backspace') && e.target.tagName !== 'INPUT') {
-      nodes.filter((n) => n.selected).forEach((n) => deleteNode(n.id));
+  const handleKeyDown = useCallback(async (e) => {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+      for (const n of nodes.filter((node) => node.selected)) {
+        const result = await deleteNode(n.id);
+        if (result?.heldCount) {
+          setDeleteWarning({ nodeId: n.id, heldCount: result.heldCount });
+          return;
+        }
+      }
     }
   }, [nodes, deleteNode]);
 
@@ -199,6 +208,30 @@ function CanvasInner() {
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Canvas / Flow Inspector toggle */}
+          <div className="flex items-center rounded-md border border-gray-200 dark:border-gray-600 overflow-hidden text-xs font-medium">
+            <button
+              onClick={() => setInspectorMode(false)}
+              className={`px-3 py-1.5 transition ${
+                !inspectorMode
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+              }`}
+            >
+              Canvas
+            </button>
+            <button
+              onClick={() => setInspectorMode(true)}
+              className={`px-3 py-1.5 transition ${
+                inspectorMode
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+              }`}
+            >
+              Flow Inspector
+            </button>
+          </div>
+
           <button
             onClick={() => setRunModalOpen(true)}
             disabled={uploading || runStatus === 'running'}
@@ -222,13 +255,15 @@ function CanvasInner() {
           >
             {isPublished ? 'Unpublish' : 'Publish'}
           </button>
-          <button
-            onClick={() => { setPaletteOpen((o) => !o); setSelectedNode(null); setPendingConnection(null); }}
-            className="w-8 h-8 flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-lg font-bold transition"
-            title="Add node"
-          >
-            +
-          </button>
+          {!inspectorMode && (
+            <button
+              onClick={() => { setPaletteOpen((o) => !o); setSelectedNode(null); setPendingConnection(null); }}
+              className="w-8 h-8 flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-lg font-bold transition"
+              title="Add node"
+            >
+              +
+            </button>
+          )}
         </div>
       </div>
 
@@ -246,46 +281,52 @@ function CanvasInner() {
         </div>
       )}
 
-      {/* Canvas + sidebars */}
-      <div className="flex flex-1 overflow-hidden">
-        <div className="flex-1" onDragOver={handleDragOver} onDrop={handleDrop}>
-          <ReactFlow
-            nodes={nodes}
-            edges={styledEdges}
-            nodeTypes={nodeTypes}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onNodeDragStop={onNodeDragStop}
-            onConnect={onConnect}
-            onConnectStart={handleConnectStart}
-            onConnectEnd={handleConnectEnd}
-            onEdgeClick={handleEdgeClick}
-            onNodeDoubleClick={handleNodeDoubleClick}
-            fitView
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background />
-            <Controls />
-            <MiniMap nodeStrokeWidth={3} />
-          </ReactFlow>
+      {/* Main area: canvas or flow inspector */}
+      {inspectorMode ? (
+        <div className="flex flex-1 overflow-hidden bg-white dark:bg-gray-900">
+          <FlowInspector workflowId={workflowId} />
         </div>
+      ) : (
+        <div className="flex flex-1 overflow-hidden">
+          <div className="flex-1" onDragOver={handleDragOver} onDrop={handleDrop}>
+            <ReactFlow
+              nodes={nodes}
+              edges={styledEdges}
+              nodeTypes={nodeTypes}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onNodeDragStop={onNodeDragStop}
+              onConnect={onConnect}
+              onConnectStart={handleConnectStart}
+              onConnectEnd={handleConnectEnd}
+              onEdgeClick={handleEdgeClick}
+              onNodeDoubleClick={handleNodeDoubleClick}
+              fitView
+              proOptions={{ hideAttribution: true }}
+            >
+              <Background />
+              <Controls />
+              <MiniMap nodeStrokeWidth={3} />
+            </ReactFlow>
+          </div>
 
-        {selectedNode && (
-          <NodePanel
-            key={selectedNode.id}
-            node={selectedNode}
-            onClose={() => setSelectedNode(null)}
-          />
-        )}
+          {selectedNode && (
+            <NodePanel
+              key={selectedNode.id}
+              node={selectedNode}
+              onClose={() => setSelectedNode(null)}
+            />
+          )}
 
-        {paletteOpen && !selectedNode && (
-          <NodePalette
-            onAddNode={handleAddNode}
-            onClose={() => { setPaletteOpen(false); setPendingConnection(null); }}
-            connectingFrom={pendingConnection ? nodes.find((n) => n.id === pendingConnection.fromNodeId)?.data?.label : null}
-          />
-        )}
-      </div>
+          {paletteOpen && !selectedNode && (
+            <NodePalette
+              onAddNode={handleAddNode}
+              onClose={() => { setPaletteOpen(false); setPendingConnection(null); }}
+              connectingFrom={pendingConnection ? nodes.find((n) => n.id === pendingConnection.fromNodeId)?.data?.label : null}
+            />
+          )}
+        </div>
+      )}
     </div>
 
     {runModalOpen && (
@@ -295,6 +336,42 @@ function CanvasInner() {
         onClose={() => setRunModalOpen(false)}
         uploading={uploading}
       />
+    )}
+
+    {deleteWarning && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-sm mx-4">
+          <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Delete node</h2>
+          </div>
+          <div className="px-5 py-4 text-sm text-gray-700 dark:text-gray-300 space-y-2">
+            <p>
+              This node has <strong>{deleteWarning.heldCount}</strong> held document{deleteWarning.heldCount !== 1 ? 's' : ''}.
+            </p>
+            <p>
+              Processing documents will be allowed to complete naturally. If they later reach the deleted node, they will fail and appear in the Failed tab of the orphaned section.
+            </p>
+            <p>If you proceed, all held documents will be moved to Orphaned Documents.</p>
+          </div>
+          <div className="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
+            <button
+              onClick={() => setDeleteWarning(null)}
+              className="px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={async () => {
+                await deleteNode(deleteWarning.nodeId, true);
+                setDeleteWarning(null);
+              }}
+              className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition"
+            >
+              Proceed
+            </button>
+          </div>
+        </div>
+      </div>
     )}
     </>
   );

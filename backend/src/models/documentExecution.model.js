@@ -103,4 +103,99 @@ module.exports = {
       .select(`${LOG_TABLE}.*`)
       .first();
   },
+
+  // ── Flow Inspector ──────────────────────────────────────────────────────────
+
+  // Per-node processing/held counts (live) + failed counts for a whole workflow
+  async getFlowInspectorSummary(workflowId) {
+    const liveRows = await db('document_executions as de')
+      .join('workflow_runs as wr', 'wr.id', 'de.workflow_run_id')
+      .where('wr.workflow_id', workflowId)
+      .whereIn('de.status', ['processing', 'held'])
+      .whereNotNull('de.current_node_id')
+      .select('de.current_node_id as node_id', 'de.status')
+      .count('* as count')
+      .groupBy('de.current_node_id', 'de.status');
+
+    const failedRows = await db('node_execution_logs as nel')
+      .join('document_executions as de', 'de.id', 'nel.document_execution_id')
+      .join('workflow_runs as wr', 'wr.id', 'de.workflow_run_id')
+      .where('wr.workflow_id', workflowId)
+      .where('nel.status', 'failed')
+      .select('nel.node_id')
+      .countDistinct('nel.document_execution_id as count')
+      .groupBy('nel.node_id');
+
+    return { liveRows, failedRows };
+  },
+
+  // Documents currently processing or held at a specific node
+  async getNodeLiveDocs(workflowId, nodeId, status) {
+    return db('document_executions as de')
+      .join('workflow_runs as wr', 'wr.id', 'de.workflow_run_id')
+      .join('documents as d', 'd.id', 'de.document_id')
+      .leftJoin('extractor_held_documents as ehd', 'ehd.document_execution_id', 'de.id')
+      .where('wr.workflow_id', workflowId)
+      .where('de.current_node_id', nodeId)
+      .where('de.status', status)
+      .select(
+        'de.id',
+        'de.status',
+        'de.updated_at',
+        'de.created_at',
+        'd.file_name',
+        'd.id as document_id',
+        'ehd.held_reason',
+      )
+      .orderBy('de.updated_at', 'asc');
+  },
+
+  // Documents that have failed at a specific node across all runs of a workflow
+  async getNodeFailedDocs(workflowId, nodeId) {
+    return db('node_execution_logs as nel')
+      .join('document_executions as de', 'de.id', 'nel.document_execution_id')
+      .join('workflow_runs as wr', 'wr.id', 'de.workflow_run_id')
+      .join('documents as d', 'd.id', 'de.document_id')
+      .where('wr.workflow_id', workflowId)
+      .where('nel.node_id', nodeId)
+      .where('nel.status', 'failed')
+      .select('de.id', 'd.file_name', 'd.id as document_id', 'nel.error', 'nel.completed_at')
+      .orderBy('nel.completed_at', 'desc');
+  },
+
+  // Orphaned documents for a workflow
+  async getOrphanedDocs(workflowId) {
+    return db('document_executions as de')
+      .join('workflow_runs as wr', 'wr.id', 'de.workflow_run_id')
+      .join('documents as d', 'd.id', 'de.document_id')
+      .where('wr.workflow_id', workflowId)
+      .where('de.status', 'orphaned')
+      .select('de.id', 'd.file_name', 'd.id as document_id', 'de.orphaned_node_name', 'de.updated_at')
+      .orderBy('de.updated_at', 'desc');
+  },
+
+  // Mark all held docs at a node as orphaned (called on node deletion)
+  async orphanHeldDocs(nodeId, nodeName) {
+    return db(TABLE)
+      .where({ current_node_id: nodeId, status: 'held' })
+      .update({
+        status: 'orphaned',
+        current_node_id: null,
+        orphaned_node_name: nodeName,
+        updated_at: db.fn.now(),
+      });
+  },
+
+  // Count held docs at a node (used for deletion warning)
+  async countHeldAtNode(nodeId) {
+    const [{ count }] = await db(TABLE)
+      .where({ current_node_id: nodeId, status: 'held' })
+      .count('* as count');
+    return Number(count);
+  },
+
+  // Delete a document execution record
+  async deleteExecution(id) {
+    await db(TABLE).where({ id }).delete();
+  },
 };
