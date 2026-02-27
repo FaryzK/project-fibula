@@ -154,6 +154,63 @@ async function runAndRecordComparisons(matchingSetId, variation, setDocs, extrac
 }
 
 /**
+ * After a doc is added to a set, scan held docs of still-missing extractor types and
+ * retroactively add any that match. Continues until no more docs can be added.
+ * Returns the final setDocs (plain rows, no metadata) for completeness checks.
+ */
+async function backfillHeldDocsToSet(setId, rule, variation, userId) {
+  const expectedIds = [rule.anchor_extractor_id, ...rule.target_extractors.map((t) => t.extractor_id)];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const currentSetDocs = await reconciliationModel.findSetDocsWithMetadata(setId);
+    const presentIds = new Set(currentSetDocs.map((d) => d.extractor_id));
+    const missingIds = expectedIds.filter((id) => !presentIds.has(id));
+    for (const missingId of missingIds) {
+      const heldDocs = await reconciliationModel.findHeldDocsByExtractor(userId, missingId);
+      for (const held of heldDocs) {
+        const meta = typeof held.doc_metadata === 'object' ? held.doc_metadata : JSON.parse(held.doc_metadata || '{}');
+        const matches = docBelongsToSet(missingId, meta.header || meta, currentSetDocs, variation.doc_matching_links);
+        if (matches) {
+          await reconciliationModel.addDocToSet({
+            matchingSetId: setId,
+            documentExecutionId: held.document_execution_id,
+            extractorId: missingId,
+          });
+          changed = true;
+          break; // re-fetch setDocs and retry
+        }
+      }
+      if (changed) break;
+    }
+  }
+}
+
+/**
+ * After all docs are present, run comparisons and check for auto-reconcile.
+ * Returns { fullyReconciled, setDocs } so the caller can decide on send-out.
+ */
+async function finaliseSet(setId, rule, variation, allExtractors) {
+  const setDocs = await reconciliationModel.findSetDocs(setId);
+  const presentIds = new Set(setDocs.map((d) => d.extractor_id));
+  const expectedIds = [rule.anchor_extractor_id, ...rule.target_extractors.map((t) => t.extractor_id)];
+  if (!expectedIds.every((id) => presentIds.has(id))) return { fullyReconciled: false, setDocs };
+
+  const setDocsWithMeta = await reconciliationModel.findSetDocsWithMetadata(setId);
+  await runAndRecordComparisons(setId, variation, setDocsWithMeta, allExtractors);
+
+  const fullyReconciled = await reconciliationModel.isVariationFullyReconciled(setId, variation.id);
+  if (fullyReconciled) {
+    await reconciliationModel.updateMatchingSetStatus(setId, 'reconciled');
+    const anchorHeld = await reconciliationModel.findHeldDocByDocExecId(setDocs.find(
+      (d) => d.extractor_id === rule.anchor_extractor_id
+    )?.document_execution_id);
+    if (anchorHeld) await reconciliationModel.updateHeldDocStatus(anchorHeld.id, 'reconciled');
+  }
+  return { fullyReconciled, setDocs };
+}
+
+/**
  * Process a document arriving at a RECONCILIATION node.
  *
  * Returns:
@@ -200,17 +257,31 @@ async function processDocument({ docExecutionId, metadata, workflowId, nodeId, u
         // Create a matching set for this anchor × variation if one doesn't already exist
         const existingSets = await reconciliationModel.findMatchingSetsByAnchor(docExecutionId);
         const existingForVariation = existingSets.find((s) => s.variation_id === variation.id);
-        if (!existingForVariation) {
+        let setId = existingForVariation?.id;
+        if (!setId) {
           const newSet = await reconciliationModel.createMatchingSet({
             ruleId: rule.id,
             variationId: variation.id,
             anchorDocExecId: docExecutionId,
           });
+          setId = newSet.id;
           await reconciliationModel.addDocToSet({
-            matchingSetId: newSet.id,
+            matchingSetId: setId,
             documentExecutionId: docExecutionId,
             extractorId,
           });
+          // Retroactively pull in held docs of missing types
+          await backfillHeldDocsToSet(setId, rule, variation, userId);
+        }
+
+        const { fullyReconciled, setDocs: finalDocs } = await finaliseSet(setId, rule, variation, allExtractors);
+        if (fullyReconciled && rule.auto_send_out) {
+          for (const doc of finalDocs) {
+            if (doc.document_execution_id === docExecutionId) continue;
+            const hd = await reconciliationModel.findHeldDocByDocExecId(doc.document_execution_id);
+            setDocExecIds.push({ docExecutionId: doc.document_execution_id, outputPort: hd?.slot_id || slotId });
+          }
+          shouldContinue = true;
         }
       }
 
@@ -232,40 +303,15 @@ async function processDocument({ docExecutionId, metadata, workflowId, nodeId, u
             extractorId,
           });
 
-          // Check if all expected extractors are now present
-          const setDocs = await reconciliationModel.findSetDocs(set.id);
-          const presentExtractorIds = new Set(setDocs.map((d) => d.extractor_id));
-          const expectedIds = [
-            rule.anchor_extractor_id,
-            ...rule.target_extractors.map((t) => t.extractor_id),
-          ];
-          if (!expectedIds.every((id) => presentExtractorIds.has(id))) continue;
+          // Retroactively pull in held docs of still-missing types
+          await backfillHeldDocsToSet(set.id, rule, variation, userId);
 
-          // Run comparisons and record results
-          // Need setDocs with document_execution_id for context building
-          const setDocsWithExecId = await reconciliationModel.findSetDocs(set.id);
-          await runAndRecordComparisons(set.id, variation, setDocsWithExecId, allExtractors);
-
-          // Check if fully reconciled
-          const fullyReconciled = await reconciliationModel.isVariationFullyReconciled(set.id, variation.id);
-          if (!fullyReconciled) continue;
-
-          // Mark matching set and anchor held doc as reconciled
-          await reconciliationModel.updateMatchingSetStatus(set.id, 'reconciled');
-          const anchorHeld = await reconciliationModel.findHeldDocByDocExecId(set.anchor_document_execution_id);
-          if (anchorHeld) {
-            await reconciliationModel.updateHeldDocStatus(anchorHeld.id, 'reconciled');
-          }
-
-          if (rule.auto_send_out) {
-            // Advance all docs in the set on their respective slot ports
-            for (const doc of setDocsWithExecId) {
-              if (doc.document_execution_id === docExecutionId) continue; // current doc advances normally
+          const { fullyReconciled, setDocs: finalDocs } = await finaliseSet(set.id, rule, variation, allExtractors);
+          if (fullyReconciled && rule.auto_send_out) {
+            for (const doc of finalDocs) {
+              if (doc.document_execution_id === docExecutionId) continue;
               const hd = await reconciliationModel.findHeldDocByDocExecId(doc.document_execution_id);
-              setDocExecIds.push({
-                docExecutionId: doc.document_execution_id,
-                outputPort: hd?.slot_id || slotId,
-              });
+              setDocExecIds.push({ docExecutionId: doc.document_execution_id, outputPort: hd?.slot_id || slotId });
             }
             shouldContinue = true;
           }
