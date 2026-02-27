@@ -38,7 +38,8 @@ function getField(metadata, fieldPath) {
 
 /**
  * Evaluate a calculation_expression with schema and mapset context.
- * e.g. "schema.quantity * mapset.conversion"
+ * e.g. "schema * mapset"
+ * schema = current schema field value, mapset = matched record column value.
  */
 function evalCalculation(expression, schemaVal, mapsetVal) {
   try {
@@ -50,20 +51,49 @@ function evalCalculation(expression, schemaVal, mapsetVal) {
 }
 
 /**
+ * Score an array of map set records against all lookups.
+ * schemaResolver(fieldPath) returns the schema value for a given lookup field.
+ * Returns sorted { record, score } pairs (best first), or [] if no lookup could be evaluated.
+ */
+function scoreRecords(records, lookups, schemaResolver) {
+  let candidates = records.map((record) => ({ record, score: 1.0 }));
+  let anyEvaluated = false;
+
+  for (const lookup of lookups) {
+    const schemaVal = schemaResolver(lookup.schema_field);
+    if (schemaVal === undefined) continue;
+    anyEvaluated = true;
+    candidates = candidates
+      .map(({ record }) => {
+        const recordVal = record[lookup.map_set_column];
+        const sim = stringSimilarity(schemaVal, recordVal);
+        if (lookup.match_type === 'exact') {
+          return sim === 1.0 ? { record, score: 1.0 } : null;
+        } else {
+          const threshold = lookup.match_threshold != null ? lookup.match_threshold : 0.8;
+          return sim >= threshold ? { record, score: sim } : null;
+        }
+      })
+      .filter(Boolean);
+  }
+
+  if (!anyEvaluated) return [];
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates;
+}
+
+/**
  * Apply a data map rule to document metadata.
  * Returns enriched metadata.
  */
 async function applyRule(rule, metadata) {
   if (!rule.lookups || rule.lookups.length === 0) return metadata;
 
-  // Header and tables may be objects or JSON strings
   const header = typeof metadata.header === 'string' ? JSON.parse(metadata.header) : (metadata.header || {});
 
-  // Resolve a schema field: try direct path first, then inside header
   function resolveField(fieldPath) {
     const direct = getField(metadata, fieldPath);
     if (direct !== undefined) return direct;
-    // Schema field names from the extractor (e.g. "Vendor Name") live under header
     const fromHeader = header[fieldPath];
     if (fromHeader !== undefined) return fromHeader;
     return undefined;
@@ -82,55 +112,92 @@ async function applyRule(rule, metadata) {
     });
   }
 
-  // Score each record against all lookups (AND logic)
-  let candidates = recordsBySet[setIds[0]] ? [...recordsBySet[setIds[0]]] : [];
+  const allRecords = recordsBySet[setIds[0]] || [];
 
-  for (const lookup of rule.lookups) {
-    const schemaVal = resolveField(lookup.schema_field);
-    if (schemaVal === undefined) continue;
+  // Separate targets by type
+  const headerTargets = (rule.targets || []).filter((t) => t.target_type !== 'table_column');
+  const tableTargets = (rule.targets || []).filter((t) => t.target_type === 'table_column');
 
-    candidates = candidates
-      .map((record) => {
-        const recordVal = record[lookup.map_set_column];
-        const sim = stringSimilarity(schemaVal, recordVal);
-
-        if (lookup.match_type === 'exact') {
-          return sim === 1.0 ? { record, score: 1.0 } : null;
-        } else {
-          const threshold = lookup.match_threshold != null ? lookup.match_threshold : 0.8;
-          return sim >= threshold ? { record, score: sim } : null;
-        }
-      })
-      .filter(Boolean);
-  }
-
-  if (candidates.length === 0) return metadata;
-
-  candidates.sort((a, b) => b.score - a.score);
-  const bestRecord = candidates[0].record;
-
-  // Apply targets — write into header if the field exists there, else top-level
   const enrichedHeader = { ...header };
   const enriched = { ...metadata, header: enrichedHeader };
 
-  for (const target of rule.targets || []) {
-    const mapsetVal = bestRecord[target.map_set_column];
-    const field = target.schema_field;
+  // ── Header block ──────────────────────────────────────────────────────────
+  if (headerTargets.length > 0) {
+    const candidates = scoreRecords(allRecords, rule.lookups, resolveField);
+    if (candidates.length > 0) {
+      const bestRecord = candidates[0].record;
+      for (const target of headerTargets) {
+        const mapsetVal = bestRecord[target.map_set_column];
+        const field = target.schema_field;
+        let value;
+        if (target.mode === 'calculation' && target.calculation_expression) {
+          const schemaVal = resolveField(field);
+          value = evalCalculation(target.calculation_expression, schemaVal, mapsetVal);
+        } else {
+          value = mapsetVal;
+        }
+        if (field in enrichedHeader) {
+          enrichedHeader[field] = value;
+        } else {
+          enriched[field] = value;
+        }
+      }
+    }
+  }
 
-    let value;
-    if (target.mode === 'calculation' && target.calculation_expression) {
-      const schemaVal = resolveField(field);
-      value = evalCalculation(target.calculation_expression, schemaVal, mapsetVal);
-    } else {
-      value = mapsetVal;
+  // ── Table block ───────────────────────────────────────────────────────────
+  if (tableTargets.length > 0) {
+    // Group targets by table name (parsed from "TableName.column")
+    const tableGroups = {};
+    for (const t of tableTargets) {
+      const dotIdx = t.schema_field.indexOf('.');
+      const tblName = dotIdx !== -1 ? t.schema_field.slice(0, dotIdx) : t.schema_field;
+      const colName = dotIdx !== -1 ? t.schema_field.slice(dotIdx + 1) : t.schema_field;
+      if (!tableGroups[tblName]) tableGroups[tblName] = [];
+      tableGroups[tblName].push({ ...t, _colName: colName });
     }
 
-    // Write to header if the field lives there, otherwise top-level
-    if (field in enrichedHeader) {
-      enrichedHeader[field] = value;
-    } else {
-      enriched[field] = value;
+    const enrichedTables = { ...(metadata.tables || {}) };
+
+    for (const [tableName, tgts] of Object.entries(tableGroups)) {
+      const rows = Array.isArray(enrichedTables[tableName]) ? enrichedTables[tableName] : [];
+      if (rows.length === 0) continue;
+
+      const newRows = [];
+      for (const row of rows) {
+        // Row-level resolver: table columns take priority, then fall back to header
+        function resolveRowField(fieldPath) {
+          const di = fieldPath.indexOf('.');
+          if (di !== -1 && fieldPath.slice(0, di) === tableName) {
+            return row[fieldPath.slice(di + 1)];
+          }
+          return header[fieldPath] !== undefined ? header[fieldPath] : getField(metadata, fieldPath);
+        }
+
+        const candidates = scoreRecords(allRecords, rule.lookups, resolveRowField);
+        if (candidates.length === 0) {
+          newRows.push(row);
+          continue;
+        }
+
+        const bestRecord = candidates[0].record;
+        const newRow = { ...row };
+        for (const tg of tgts) {
+          const mapsetVal = bestRecord[tg.map_set_column];
+          let value;
+          if (tg.mode === 'calculation' && tg.calculation_expression) {
+            value = evalCalculation(tg.calculation_expression, row[tg._colName], mapsetVal);
+          } else {
+            value = mapsetVal;
+          }
+          newRow[tg._colName] = value;
+        }
+        newRows.push(newRow);
+      }
+      enrichedTables[tableName] = newRows;
     }
+
+    enriched.tables = enrichedTables;
   }
 
   return enriched;
