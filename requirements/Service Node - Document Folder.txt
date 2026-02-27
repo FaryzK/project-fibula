@@ -1,4 +1,4 @@
-There are 5 classes of nodes, and each class has a different usage. This document covers service node - document folder.
+There are 5 classes of nodes, and each class has a different usage. This document covers the service node - document folder.
 
 Trigger node
 Example: manual upload
@@ -17,39 +17,58 @@ Webhook node (mainly used for sending events when something happens)
 HTTP node (mainly used for exporting data)
 
 
-The document folder node is a service node that acts as a holding area for documents within a workflow. It is useful for catching documents that require human review or manual intervention before proceeding, such as documents with missing fields, fallback cases from SWITCH nodes, or any point in the workflow where the user wants to manually gate document progression.
+---
 
-Before using the document folder node in a workflow, the user must create a document folder instance. This is done from the landing page.
+DOCUMENT FOLDER NODE (Canvas)
 
-On the landing page, there is a Document Folders tab. Here the user sees a list of all document folder instances they have created. Each entry shows:
+The document folder node is a service node that acts as a holding area for documents within a workflow. Documents that arrive at the node are held and do not automatically proceed to the next node. A user must manually release them.
+
+This is useful for cases requiring human review or manual gating before documents continue — for example, documents with missing or unexpected data, fallback cases from a SWITCH node, or any point where a user wants to inspect and approve documents before they move forward.
+
+Node Configuration
+When placing a document folder node on the canvas, the user selects a folder instance from a dropdown. One folder instance can be used by multiple nodes across multiple workflows, allowing documents from different workflows to be consolidated into one place.
+
+Node Panel (clicking the node on canvas)
+- Shows the selected folder instance (dropdown to change)
+- Shows the input document and its metadata
+- Shows the list of documents currently held in the folder (with their metadata)
+- Shows the output document and metadata (after send-out)
+- A Send Out button to release held documents to the next node
+
+The node visually displays the count of held documents on the canvas.
+
+Processing
+When a document passes through the node during workflow execution, it is held in the folder. The document does not proceed until the user manually sends it out. The hold is stored with the document's source context: which workflow it came from, which node it arrived at, and when it arrived.
+
+
+---
+
+DOCUMENT FOLDER SERVICE
+
+The Document Folders tab on the landing page lists all folder instances created by the user. Each row shows:
 - The folder name
 - The number of documents currently held in it
-- The list of workflows and nodes that are using this folder instance (clicking on a workflow + node navigates to the workflow canvas and centres the view on that node)
+- The list of workflows and nodes currently using this folder instance — clicking a workflow + node entry navigates to that node on the workflow canvas
 
-To create a new document folder instance, the user presses "Add folder". They provide a folder name and press create.
+Creating a Folder
+Users press "+ Add Folder", provide a folder name, and press Create. The folder instance is then available to select when configuring a document folder node on any workflow canvas.
 
-Once a folder instance exists, the user can add a document folder node to a workflow canvas. When the node menu is opened, the user selects which folder instance this node should use via a dropdown. One folder instance can be used by multiple nodes across multiple workflows, allowing the user to consolidate documents of the same type from different workflows into one place.
-
-When a document passes through the document folder node during workflow execution, it is held in the folder and does not automatically proceed to the next node. The document is stored with the following context:
-- The document file and its metadata
+Viewing Held Documents
+Clicking a folder instance opens the document list for that folder. Each row shows:
+- Document name
 - The workflow it came from
-- The node it arrived at
-
-In the Document Folders tab on the landing page, when a user clicks on a folder instance, they see the full list of documents currently held in that folder. For each document, the following is shown:
-- Document name or identifier
-- The workflow it came from
-- The node within that workflow it is sitting at
+- The node within that workflow where it is sitting
 - Timestamp of when it arrived
 
-From this view, the user can select one or more documents and press "Send out". This pushes the selected documents to the next node in their respective workflow, continuing the execution from where it was held.
+Sending Documents Out
+The user can select one or more documents and press "Send Out". This releases the selected documents to the next node in their respective workflows, continuing execution from where each document was held.
 
-On the workflow canvas, the document folder node visually shows the count of documents currently held in it.
 
-Node menu for document folder node:
-- Shows the folder instance selected (dropdown to change)
-- Shows the input (document and metadata)
-- Shows documents currently held with their metadata
-- Shows the output (document and metadata, after send out)
-- A send out button to release held documents to the next node
+---
 
-The document folder node is the recommended destination for the fallback output of a SWITCH node, for the false branch of an IF node, and for any other case where documents need human triage before continuing.
+DOCUMENT FOLDER NODE IN THE WORKFLOW
+
+The document folder node is the recommended destination for:
+- The fallback output port of a SWITCH node (documents that matched no case)
+- The false branch of an IF node
+- Any point in the workflow where documents require human review before continuing
