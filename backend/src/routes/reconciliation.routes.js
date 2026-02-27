@@ -21,6 +21,7 @@ router.get('/:id/matching-sets', controller.listMatchingSets);
 router.get('/:id/matching-sets/:setId', controller.getMatchingSet);
 router.get('/:id/matching-sets/:setId/comparisons', controller.listComparisonResults);
 router.post('/:id/matching-sets/:setId/comparisons/:compId/force-reconcile', controller.forceReconcileComparison);
+router.post('/:id/matching-sets/:setId/rerun-comparisons', controller.rerunComparisons);
 router.post('/:id/matching-sets/:setId/force-reconcile', controller.forceReconcile);
 router.post('/:id/matching-sets/:setId/reject', controller.reject);
 

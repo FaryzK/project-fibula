@@ -1,7 +1,9 @@
 const reconciliationModel = require('../models/reconciliation.model');
 const documentExecutionModel = require('../models/documentExecution.model');
+const extractorModel = require('../models/extractor.model');
 const { db } = require('../config/db');
 const { resumeDocumentExecution } = require('../services/execution.service');
+const { runAndRecordComparisons } = require('../services/reconciliation.service');
 
 module.exports = {
   async list(req, res, next) {
@@ -311,6 +313,45 @@ module.exports = {
             }
           }
         }
+      }
+
+      const updatedResults = await reconciliationModel.findComparisonResults(req.params.setId);
+      return res.json(updatedResults);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /reconciliation-rules/:id/matching-sets/:setId/rerun-comparisons
+  async rerunComparisons(req, res, next) {
+    try {
+      const rule = await reconciliationModel.findById(req.params.id);
+      if (!rule) return res.status(404).json({ error: 'Not found' });
+      if (rule.user_id !== req.dbUser.id) return res.status(403).json({ error: 'Forbidden' });
+
+      const set = await reconciliationModel.findMatchingSetById(req.params.setId);
+      if (!set) return res.status(404).json({ error: 'Matching set not found' });
+
+      const variation = rule.variations.find((v) => v.id === set.variation_id);
+      if (!variation) return res.status(404).json({ error: 'Variation not found' });
+
+      const allExtractorIds = [rule.anchor_extractor_id, ...rule.target_extractors.map((t) => t.extractor_id)];
+      const allExtractors = await Promise.all(
+        allExtractorIds.map(async (eid) => {
+          const ex = await extractorModel.findById(eid);
+          return { id: eid, name: ex?.name || eid };
+        })
+      );
+
+      const setDocsWithMeta = await reconciliationModel.findSetDocsWithMetadata(req.params.setId);
+      await runAndRecordComparisons(req.params.setId, variation, setDocsWithMeta, allExtractors);
+
+      // Check if now fully reconciled
+      const fullyReconciled = await reconciliationModel.isVariationFullyReconciled(req.params.setId, variation.id);
+      if (fullyReconciled) {
+        await reconciliationModel.updateMatchingSetStatus(req.params.setId, 'reconciled');
+        const anchorHeld = await reconciliationModel.findHeldDocByDocExecId(set.anchor_document_execution_id);
+        if (anchorHeld) await reconciliationModel.updateHeldDocStatus(anchorHeld.id, 'reconciled');
       }
 
       const updatedResults = await reconciliationModel.findComparisonResults(req.params.setId);

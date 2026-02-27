@@ -32,6 +32,8 @@ const reconciliationService = {
     api.get(`/reconciliation-rules/${ruleId}/matching-sets/${setId}/comparisons`).then((r) => r.data),
   forceReconcileComparison: (ruleId, setId, compId) =>
     api.post(`/reconciliation-rules/${ruleId}/matching-sets/${setId}/comparisons/${compId}/force-reconcile`).then((r) => r.data),
+  rerunComparisons: (ruleId, setId) =>
+    api.post(`/reconciliation-rules/${ruleId}/matching-sets/${setId}/rerun-comparisons`).then((r) => r.data),
 
   // Legacy set-level actions (kept for backward compat)
   forceReconcile: (ruleId, setId) =>

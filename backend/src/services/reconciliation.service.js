@@ -95,31 +95,75 @@ function evalFormula(formula, context) {
 async function runSingleComparison(compRule, setDocs, extractors) {
   if (!compRule.formula) return { passed: true };
 
-  // Build context: extractor_name → metadata header
+  // Build context: sanitize both extractor names AND header field names (both can have spaces).
+  // Spaces/special chars → underscores so everything is a valid JS identifier in the VM.
   const context = {};
+  const nameToSanitized = {};
+  const fieldNameMaps = {}; // sanitizedExtractorName → { 'Original Field': 'Original_Field' }
   for (const doc of setDocs) {
     const docExec = await documentExecutionModel.findById(doc.document_execution_id);
     const meta = typeof docExec?.metadata === 'object' ? docExec.metadata : JSON.parse(docExec?.metadata || '{}');
     const extractor = extractors.find((e) => e.id === doc.extractor_id);
-    if (extractor) context[extractor.name] = meta.header || meta;
+    if (extractor) {
+      const sanitizedName = extractor.name.replace(/[^a-zA-Z0-9_$]/g, '_');
+      nameToSanitized[extractor.name] = sanitizedName;
+      const header = meta.header || meta;
+      const sanitizedHeader = {};
+      const fieldMap = {};
+      for (const [key, val] of Object.entries(header)) {
+        const sanitizedKey = key.replace(/[^a-zA-Z0-9_$]/g, '_');
+        sanitizedHeader[sanitizedKey] = val;
+        if (key !== sanitizedKey) fieldMap[key] = sanitizedKey;
+      }
+      context[sanitizedName] = sanitizedHeader;
+      if (Object.keys(fieldMap).length > 0) fieldNameMaps[sanitizedName] = fieldMap;
+    }
   }
 
   if (compRule.level !== 'header') return { passed: true }; // skip table-level for MVP
 
-  let result = evalFormula(compRule.formula, context);
+  // Rewrite formula in three passes:
+  //   1. Replace extractor names (longest first to avoid partial matches)
+  //   2. Replace field names that had spaces (e.g. "Credit Total" → "Credit_Total")
+  //   3. Normalise lone = to == (leaves ==, !=, <=, >= untouched)
+  let formula = compRule.formula;
+  const sortedNames = Object.keys(nameToSanitized).sort((a, b) => b.length - a.length);
+  for (const origName of sortedNames) {
+    formula = formula.split(origName).join(nameToSanitized[origName]);
+  }
+  for (const [sanitizedExtractor, fieldMap] of Object.entries(fieldNameMaps)) {
+    const sortedFields = Object.keys(fieldMap).sort((a, b) => b.length - a.length);
+    for (const origField of sortedFields) {
+      formula = formula.split(`${sanitizedExtractor}.${origField}`).join(`${sanitizedExtractor}.${fieldMap[origField]}`);
+    }
+  }
+  // (?<![=!<>])=(?!=) matches a lone = only; leaves ==, !=, <=, >= untouched.
+  formula = formula.replace(/(?<![=!<>])=(?!=)/g, '==');
 
-  if (!result && compRule.tolerance_value != null) {
-    const match = compRule.formula.match(/^(.+?)\s*==?\s*(.+)$/);
+  let result = evalFormula(formula, context);
+
+  // Floating-point fallback: when == returns false but both sides are numeric,
+  // check with a tiny epsilon first (handles cases like 934.2 - 59.4 = 874.8000000000001),
+  // then apply user-defined tolerance if set.
+  if (!result) {
+    const match = formula.match(/^(.+?)\s*==\s*(.+)$/);
     if (match) {
       try {
         const ctx = vm.createContext({ ...context, Math, Number });
         const leftVal = Number(vm.runInContext(match[1].trim(), ctx, { timeout: 100 }));
         const rightVal = Number(vm.runInContext(match[2].trim(), ctx, { timeout: 100 }));
-        const diff = Math.abs(leftVal - rightVal);
-        if (compRule.tolerance_type === 'absolute') {
-          result = diff <= compRule.tolerance_value;
-        } else if (compRule.tolerance_type === 'percentage' && rightVal !== 0) {
-          result = (diff / Math.abs(rightVal)) * 100 <= compRule.tolerance_value;
+        if (!isNaN(leftVal) && !isNaN(rightVal)) {
+          const diff = Math.abs(leftVal - rightVal);
+          // Built-in epsilon for floating-point rounding errors (e.g. 934.2 - 59.4 ≠ 874.8 in float64)
+          if (diff <= 1e-9) {
+            result = true;
+          } else if (compRule.tolerance_value != null) {
+            if (compRule.tolerance_type === 'absolute') {
+              result = diff <= compRule.tolerance_value;
+            } else if (compRule.tolerance_type === 'percentage' && rightVal !== 0) {
+              result = (diff / Math.abs(rightVal)) * 100 <= compRule.tolerance_value;
+            }
+          }
         }
       } catch (_) { /* leave result as false */ }
     }
@@ -228,6 +272,8 @@ async function processDocument({ docExecutionId, metadata, workflowId, nodeId, u
     slotId,
     slotLabel,
   });
+  // Persist enriched metadata (header + tables) so comparison display can read actual field values
+  await documentExecutionModel.updateStatus(docExecutionId, { metadata });
 
   // 2. Find all applicable rules for this extractor
   const ruleStubs = await reconciliationModel.findRulesForExtractor(userId, extractorId);
