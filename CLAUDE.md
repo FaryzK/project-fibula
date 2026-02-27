@@ -35,6 +35,7 @@ All feature specs live in `/requirements/`. **Always read the relevant file befo
 | `Service Node - Document Folder.txt` | Document folder instances, hold + send-out behaviour |
 | `Webhook Node.txt` | Inbound webhook trigger node |
 | `HTTP Node.txt` | Outbound HTTP export node |
+| `Flow Inspector.txt` | Flow Inspector view — per-node document status, held/failed/orphaned docs, re-trigger flow |
 
 ## Dev Commands
 - cd frontend && npm run dev       start frontend (Vite dev server)
@@ -50,6 +51,7 @@ All feature specs live in `/requirements/`. **Always read the relevant file befo
 - Open a PR and merge into main when the phase is complete and tests pass
 - Never commit directly to main
 - After pushing or merging a phase branch, update the phase status table in `MEMORY.md`
+- After implementing and pushing new functionality, update the relevant requirements file in `/requirements/` to document what was built (or create one if it doesn't exist). Update the requirements table in this file (CLAUDE.md) if a new requirements file was created
 
 ## Commit Message Convention (Conventional Commits)
 Format: `<type>: <short description>`
