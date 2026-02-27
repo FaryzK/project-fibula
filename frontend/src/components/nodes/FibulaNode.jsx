@@ -130,6 +130,11 @@ function FibulaNode({ id, data, selected }) {
   const runStatus = deriveNodeRunStatus(statusList);
   const totalDocs = statusList.reduce((sum, s) => sum + (s.count || 0), 0);
 
+  // Reconciliation nodes hold docs as normal operating behavior — show ✓ instead of ⏸
+  const isReconHeld = data.nodeType === 'RECONCILIATION' && runStatus === 'held';
+  const statusLabel = isReconHeld ? RUN_STATUS_LABELS.completed : RUN_STATUS_LABELS[runStatus];
+  const statusStyle = isReconHeld ? RUN_STATUS_STYLES.completed : RUN_STATUS_STYLES[runStatus];
+
   return (
     <div
       className={`bg-white dark:bg-gray-800 rounded-lg border-2 shadow-sm transition ${
@@ -147,8 +152,8 @@ function FibulaNode({ id, data, selected }) {
         <div className="flex items-center justify-between">
           <span className="text-xs text-gray-400 dark:text-gray-500">{category}</span>
           {runStatus && (
-            <span className={`text-xs font-bold px-1.5 py-0.5 rounded border flex items-center gap-1 ${RUN_STATUS_STYLES[runStatus]}`}>
-              {RUN_STATUS_LABELS[runStatus]}
+            <span className={`text-xs font-bold px-1.5 py-0.5 rounded border flex items-center gap-1 ${statusStyle}`}>
+              {statusLabel}
               {totalDocs > 0 && <span className="font-normal opacity-80">{totalDocs}</span>}
             </span>
           )}

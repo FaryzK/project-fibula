@@ -84,6 +84,14 @@ module.exports = {
     return row;
   },
 
+  // Find the most recent log for a specific (documentExecutionId, nodeId) pair
+  async findLog(documentExecutionId, nodeId) {
+    return db(LOG_TABLE)
+      .where({ document_execution_id: documentExecutionId, node_id: nodeId })
+      .orderBy('started_at', 'desc')
+      .first();
+  },
+
   // Latest log entry for a given node in a given run (for IO visibility)
   async getLatestNodeLog(workflowRunId, nodeId) {
     return db(LOG_TABLE)

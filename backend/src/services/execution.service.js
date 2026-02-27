@@ -305,12 +305,17 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
     const node = nodeMap[nodeId];
     if (!node) continue;
 
-    const log = await documentExecutionModel.createLog({
-      documentExecutionId: docExecution.id,
-      nodeId,
-      status: 'processing',
-      inputMetadata: metadata,
-    });
+    // Reuse a pre-created log (e.g. from a fanout block) if one exists for this node,
+    // otherwise create a fresh one. This prevents duplicate log rows.
+    let log = await documentExecutionModel.findLog(docExecution.id, nodeId);
+    if (!log) {
+      log = await documentExecutionModel.createLog({
+        documentExecutionId: docExecution.id,
+        nodeId,
+        status: 'processing',
+        inputMetadata: metadata,
+      });
+    }
 
     await documentExecutionModel.updateStatus(docExecution.id, {
       status: 'processing',
@@ -335,11 +340,14 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
       return;
     }
 
-    await documentExecutionModel.updateLog(log.id, {
-      status: logStatus,
-      outputMetadata: result.outputMetadata || metadata,
-      error: logError,
-    });
+    // For fanout, skip the generic log update — the fanout block writes its own richer output.
+    if (result.type !== 'fanout') {
+      await documentExecutionModel.updateLog(log.id, {
+        status: logStatus,
+        outputMetadata: result.outputMetadata || metadata,
+        error: logError,
+      });
+    }
 
     if (logStatus === 'failed') {
       await documentExecutionModel.updateStatus(docExecution.id, { status: 'failed', currentNodeId: null });
@@ -347,11 +355,9 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
     }
 
     if (result.type === 'fanout') {
-      await documentExecutionModel.updateStatus(docExecution.id, {
-        status: 'completed',
-        currentNodeId: null,
-      });
-
+      // Create all child documents and queue them BEFORE marking the parent as completed.
+      // This prevents a polling window where splitting looks "done" but children haven't
+      // started yet, causing a visual gap on the canvas.
       const childDocIds = [];
       for (const subDoc of result.subDocuments) {
         const newDoc = await documentModel.create({
@@ -370,6 +376,24 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
           metadata: { document_id: newDoc.id, label: subDoc.label, parent_document_id: metadata.document_id },
         }));
 
+        // Pre-create processing logs for all immediate downstream nodes so the canvas
+        // shows them as 'processing' in the same poll that shows the parent as 'completed',
+        // eliminating the visual gap between splitting ✓ and the next node having no badge.
+        for (const nextNode of nextNodes) {
+          await documentExecutionModel.createLog({
+            documentExecutionId: newExec[0].id,
+            nodeId: nextNode.nodeId,
+            status: 'processing',
+            inputMetadata: nextNode.metadata,
+          });
+        }
+        if (nextNodes.length > 0) {
+          await documentExecutionModel.updateStatus(newExec[0].id, {
+            status: 'processing',
+            currentNodeId: nextNodes[0].nodeId,
+          });
+        }
+
         pendingExecQueue.push({
           docExecution: newExec[0],
           startQueue: nextNodes,
@@ -380,6 +404,12 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
       await documentExecutionModel.updateLog(log.id, {
         status: 'completed',
         outputMetadata: { split_count: childDocIds.length, child_document_ids: childDocIds },
+      });
+
+      // Mark parent as completed only after all children are in the queue
+      await documentExecutionModel.updateStatus(docExecution.id, {
+        status: 'completed',
+        currentNodeId: null,
       });
 
       return;
@@ -435,7 +465,15 @@ async function runWorkflow(workflowRunId) {
 
   while (pendingExecQueue.length > 0) {
     const { docExecution, startQueue } = pendingExecQueue.shift();
-    await runDocument(docExecution, nodes, edges, graph, workflowRunId, pendingExecQueue, startQueue);
+    try {
+      await runDocument(docExecution, nodes, edges, graph, workflowRunId, pendingExecQueue, startQueue);
+    } catch (err) {
+      console.error(`runDocument failed for exec ${docExecution?.id}:`, err);
+      // Mark the individual exec as failed so the canvas shows ✕ instead of hanging
+      if (docExecution?.id) {
+        await documentExecutionModel.updateStatus(docExecution.id, { status: 'failed', currentNodeId: null }).catch(() => {});
+      }
+    }
   }
 
   const allExecs = await documentExecutionModel.findByRunId(workflowRunId);
