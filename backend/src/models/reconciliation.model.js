@@ -298,6 +298,19 @@ module.exports = {
     return db(SET_DOCS).where({ matching_set_id: matchingSetId });
   },
 
+  // Like findSetDocs but includes document_executions.metadata for each doc (used in matching logic).
+  async findSetDocsWithMetadata(matchingSetId) {
+    const rows = await db(SET_DOCS)
+      .join(DOC_EXECUTIONS, `${SET_DOCS}.document_execution_id`, `${DOC_EXECUTIONS}.id`)
+      .where(`${SET_DOCS}.matching_set_id`, matchingSetId)
+      .select(`${SET_DOCS}.extractor_id`, `${SET_DOCS}.document_execution_id`, `${DOC_EXECUTIONS}.metadata`);
+    return rows.map((r) => ({
+      extractor_id: r.extractor_id,
+      document_execution_id: r.document_execution_id,
+      metadata: typeof r.metadata === 'object' ? r.metadata : JSON.parse(r.metadata || '{}'),
+    }));
+  },
+
   async updateMatchingSetStatus(setId, status) {
     const [row] = await db(MATCHING_SETS).where({ id: setId }).update({ status }).returning('*');
     return row;
@@ -409,6 +422,15 @@ module.exports = {
         'extractors.name as extractor_name',
       )
       .orderBy(`${HELD_DOCS}.held_at`, 'desc');
+  },
+
+  // Find non-rejected held docs for a specific extractor, with their metadata from document_executions.
+  async findHeldDocsByExtractor(userId, extractorId) {
+    return db(HELD_DOCS)
+      .join(DOC_EXECUTIONS, `${HELD_DOCS}.document_execution_id`, `${DOC_EXECUTIONS}.id`)
+      .where({ [`${HELD_DOCS}.user_id`]: userId, [`${HELD_DOCS}.extractor_id`]: extractorId })
+      .whereNot(`${HELD_DOCS}.status`, 'rejected')
+      .select(`${HELD_DOCS}.*`, `${DOC_EXECUTIONS}.metadata as doc_metadata`);
   },
 
   async findHeldDocMatchingSets(documentExecutionId) {

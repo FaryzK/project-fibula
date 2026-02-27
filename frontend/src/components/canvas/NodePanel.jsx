@@ -789,9 +789,9 @@ function NodePanel({ node, onClose }) {
               Data Map Rule
             </label>
             <select
-              value={config.data_map_rule_id || ''}
+              value={config.rule_id || ''}
               onChange={(e) => {
-                const newConfig = { ...config, data_map_rule_id: e.target.value || null };
+                const newConfig = { ...config, rule_id: e.target.value || null };
                 setConfig(newConfig);
                 saveConfig(newConfig);
               }}
@@ -810,9 +810,9 @@ function NodePanel({ node, onClose }) {
                 Create a data map rule →
               </button>
             )}
-            {config.data_map_rule_id && (
+            {config.rule_id && (
               <button
-                onClick={() => navigate(`/app/data-map-rules/${config.data_map_rule_id}`)}
+                onClick={() => navigate(`/app/data-map-rules/${config.rule_id}`)}
                 className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 hover:underline block"
               >
                 Edit rule →
