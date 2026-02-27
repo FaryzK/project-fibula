@@ -1,6 +1,36 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import reconciliationService from '../../services/reconciliationService';
+import useExtractorStore from '../../stores/useExtractorStore';
+
+/**
+ * Parse a comparison formula and return { fieldRef → resolvedValue } for header-level formulas.
+ * Uses known extractor names to identify field references in free-text formulas.
+ * For table formulas (3-part refs like "Extractor.Table.Column"), returns null — too complex.
+ */
+function resolveFormulaValues(formula, extractorNames, extractorNameToDoc) {
+  const values = {};
+  for (const name of extractorNames) {
+    // Match "ExtractorName.SomeField" — field is everything up to the next operator/paren/end
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`${escaped}\\.([^+\\-*/=()<>!&|\\s][^+\\-*/=()<>!&|]*)`, 'g');
+    let m;
+    while ((m = regex.exec(formula)) !== null) {
+      const fieldRef = `${name}.${m[1].trim()}`;
+      const fieldName = m[1].trim();
+      // If field itself contains a dot it's a table ref (Extractor.Table.Column) — skip
+      if (fieldName.includes('.')) continue;
+      const doc = extractorNameToDoc[name];
+      if (!doc) { values[fieldRef] = '—'; continue; }
+      const header = typeof doc.metadata === 'object'
+        ? (doc.metadata.header ?? doc.metadata)
+        : JSON.parse(doc.metadata || '{}').header || {};
+      const val = header[fieldName];
+      values[fieldRef] = val !== undefined && val !== null ? String(val) : '—';
+    }
+  }
+  return Object.keys(values).length > 0 ? values : null;
+}
 
 const STATUS_STYLES = {
   held:       'bg-yellow-100 text-yellow-700 border-yellow-300 dark:bg-yellow-900/30 dark:text-yellow-400 dark:border-yellow-700',
@@ -33,6 +63,8 @@ function StatusBadge({ status }) {
 export default function AnchorDocDetail() {
   const { ruleId, anchorDocExecId } = useParams();
   const navigate = useNavigate();
+  const extractors = useExtractorStore((s) => s.extractors);
+  const extractorMap = Object.fromEntries(extractors.map((e) => [e.id, e.name]));
 
   const [rule, setRule] = useState(null);
   const [anchorDocs, setAnchorDocs] = useState([]);
@@ -138,6 +170,13 @@ export default function AnchorDocDetail() {
 
   const variations = rule.variations || [];
   const currentVariation = variations[variationIdx];
+
+  // Build extractor-name → doc map for the current variation's set
+  const currentDocs = currentVariation ? (setsByVariation[currentVariation.id]?.docs || []) : [];
+  const extractorNameToDoc = Object.fromEntries(
+    currentDocs.map((doc) => [extractorMap[doc.extractor_id] || doc.extractor_id, doc])
+  );
+  const extractorNames = Object.keys(extractorNameToDoc);
   const currentData = currentVariation ? setsByVariation[currentVariation.id] : null;
   const overallStatus = anchorStatus();
   const isFullyReconciled = overallStatus === 'reconciled';
@@ -301,14 +340,33 @@ export default function AnchorDocDetail() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                      {rows.map((comp) => (
+                      {rows.map((comp) => {
+                        const resolvedValues = comp.level === 'header' && !comp._notEvaluated
+                          ? resolveFormulaValues(comp.formula, extractorNames, extractorNameToDoc)
+                          : null;
+                        return (
                         <tr key={comp.id || comp.comparison_rule_id} className="bg-white dark:bg-gray-800">
                           <td className="px-4 py-2.5 font-mono text-xs text-gray-800 dark:text-gray-200">
-                            {comp.formula}
+                            <div>{comp.formula}</div>
                             {comp.tolerance_value != null && (
-                              <span className="ml-1.5 text-gray-400 dark:text-gray-500">
+                              <span className="text-gray-400 dark:text-gray-500">
                                 (±{comp.tolerance_value}{comp.tolerance_type === 'percentage' ? '%' : ''})
                               </span>
+                            )}
+                            {resolvedValues && (
+                              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-sans">
+                                {Object.entries(resolvedValues).map(([ref, val]) => (
+                                  <span key={ref} className="text-gray-400 dark:text-gray-500">
+                                    <span className="text-gray-500 dark:text-gray-400">{ref}:</span>{' '}
+                                    <span className="text-gray-700 dark:text-gray-300 font-medium">{val}</span>
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            {comp.level === 'table' && (
+                              <div className="mt-0.5 text-gray-400 dark:text-gray-500 font-sans">
+                                Row-level — evaluated per matched item pair
+                              </div>
                             )}
                           </td>
                           <td className="px-4 py-2.5 text-gray-500 dark:text-gray-400 capitalize text-xs">
@@ -328,6 +386,8 @@ export default function AnchorDocDetail() {
                             )}
                           </td>
                         </tr>
+                        );
+                      })}
                       ))}
                     </tbody>
                   </table>
