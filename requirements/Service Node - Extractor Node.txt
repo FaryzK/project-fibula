@@ -1,4 +1,4 @@
-There are 5 classes of nodes, and each class has a different usage. This document covers service node - extractor node
+There are 5 classes of nodes, and each class has a different usage. This document covers the service node - extractor node.
 
 Trigger node
 Example: manual upload
@@ -16,26 +16,128 @@ Webhook node (mainly used for sending events when something happens)
 
 HTTP node (mainly used for exporting data)
 
-A service node includes a dedicate service module for the user. The extractor node is a service. It takes a document as input, processes it, and outputs a document with the extracted data as metadata. It also attached the extractor name in the metadata. It uses a VLM, a schema, and training feedback to “extract” the correct data by generating  the right values.
 
-An initial setup is required to provide the schema. Users can go to the landing page to the extractor tab. Here users will see a list of extractors created by the user and the extractor name. To create a new extractor, user can press “+New Extractor”. They will then be directed to a page where they can define the extractor name and schema.
+---
 
-The schema contains to kind of information. Header fields and table. To define header fields, users can add a new field and define the field name and field description. They can define as many field names as they want. To define table, they first have to create a table type. The table type needs to be named with the table type description. Then the headers for the table can then be named with the table description. The reason why we need table type is because tables can be fragmented in document. Instead of having 100 objects of the same table, the table type will combine them so that we will see 1 view of containing the rows of the 100 tables. This will be used later in the reconciliation node to make matching and comparison easy for us. Do note that during inference, we would still like to understand the individual tables data too.
+EXTRACTOR NODE (Canvas)
 
-After the field names and descriptions has been defined, and after the table types name, table type descriptions, and respective table headers and table header description has been created, the initial schema is defined. Do note that it is just all text as this point.
+The extractor node is a service node that takes a document as input, extracts structured data from it using a VLM, and outputs the same document with the extracted values attached as metadata. The extractor name is also attached to the metadata so downstream nodes (e.g. reconciliation) know which schema was used.
 
-Once schema is created, users can start giving training feedback. Giving of feedback is done by uploading a document and passing the document into VLM with the schema. The VLM will return the extracted values and users see what is extracted. If a field has been extracted wrong, or a table has been extracted wrongly (e.g. wrong column), users can give feedback by clicking either the field or cells in the table, and give feedback in natural language such as “Do not capture # in invoice number” or “Capture the Amount column not the unit price” or “Do not capture this table here which is just an illustration”. Once they give feedback, a training feedback instance is stored. The training feedback instance contains the original document, and the feedback given for the table or the field. Users can hit the re-extract button to see if training is successful. This time, when user hits the re-extract button, the document, schema, and training feedback instance is sent for VLM to generate data the extracted data into the schema. Do note that there can be many training feedback. We do not send all training feedback. It is important for us to send the training feedback where the document has the highest similarity score (image embedding) to the document that we want to extract. Users can see all the training feedback instance they have created, and they can see which feedback instance was used in an inference
+Node Configuration
+When the user places an extractor node on the canvas, they configure it by selecting an extractor from a dropdown list. Each extractor represents a schema definition. Selecting one tells the node which schema and training feedback to use when processing documents.
 
-User do not have to give training feedback right when the schema is created. They can already use the node. They can go into workflow and choose an extractor node and select the extractor by dropdown by selecting the name of the extractor. It accepts a document as input, use VLM to generate extracted data, and output a document containing its extracted data as metadata. It also adds the extractor name in the metadata
+Node Panel (clicking the node on canvas)
+- Shows the input document and its metadata
+- Shows the extractor dropdown to configure which extractor to use
+- Shows the output document and its extracted metadata
+- Includes a navigation link to the extractor service page (Schema, Training, Held Documents tabs)
 
-However, do note that there is a usecase where in a live workflow, users want to capture incorrectly extracted document. One of the signals is by identifying whether a data point is missing. For example, we always know that we expect the field invoice number or the invoice table. In that case,  in the extractor, we can update schema to toggle that the field or table is mandatory. Then, if a VLM cannot find the field value or table to generate, the document will remain in the extractor service under held documents and will not be output. Users can come in here to verify. For example, if invoicenumber is missing, or table is missing, they can populate the data and give feedback such as, capture the invoice which is found on top right of this page, or capture table found in the center of the page 2. And press a button called give feedback. This creates a feedback instance so that next time a similar document is uploaded, there is context to help capture invoice or the table. After feedback is given, user can click like a send out button to output document to next node
+Processing
+When a document passes through the node:
+1. The document and schema are sent to the VLM (OpenAI Responses API, base64 PDF/image input)
+2. Relevant training feedback is selected using embedding similarity (see Training section) and included in the prompt
+3. The VLM returns extracted values structured according to the schema
+4. The extracted values are attached to the document as metadata and the document flows to the next node — unless it is held (see Held Documents section)
 
-There should also be an extractor-wide option to toggle whether to hold all documents. If that toggle is clicked then any document passed through it will be held, and not be output. User can come in and manually send out the held documents.
 
-When an extractor node is clicked, we can see the input document and metadata, and the output document and metadata with the extracted one. In the middle we can define the extractor name from dropdown. We can also click to navigate to the extractor service where we can see the json schema, the held documents and also the training feedback instances
+---
 
-We should also show the list of extractor node being used in workflow, and clicking on one will direct to user to node in a workflow.
+EXTRACTOR SERVICE
 
- 
+Users access the extractor service from the Extractors tab on the landing page, or by clicking the nav link inside the node panel on the canvas.
 
-Do note that the extractor node plays an important role when using the reconciliation node. The reconciliation node requires documents to pass an extractor node since it needs to know the extraction schema. It will need to know which schema is the anchor, which are the target documents, how to use the schema to link header and table line items, and final comparison.
+The Extractors landing page lists all extractors created by the user, showing the extractor name. Users can press "+ New Extractor" to create a new one and are directed to the extractor edit page.
+
+The extractor edit page has three tabs: Schema, Training, and Held Documents.
+
+
+---
+
+TAB 1: SCHEMA
+
+The schema defines the structure of data to be extracted from documents. It has two parts:
+
+1. Header Fields
+Header fields are document-wide data points (e.g. Invoice Number, Total Amount, Vendor Name).
+
+- Users add fields one at a time, defining a field name and a field description.
+- Field description explains to the VLM what the field represents and how to find it.
+- Each field can be toggled as Mandatory. If the VLM cannot find a value for a mandatory field, the document is held (see Held Documents).
+- Fields can be reordered by dragging (drag-to-reorder).
+
+2. Tables
+Tables capture repeating row-level data (e.g. line items).
+
+- Users first define a Table Type by giving it a name and a description.
+- Table types exist because tables in documents can be fragmented across pages. Instead of treating each page's table separately, rows from all fragments of the same type are merged into one unified table. This is important for downstream use in the reconciliation node.
+- Within each table type, users define column headers, each with a name and description.
+- Each table type can be toggled as Mandatory. If the VLM cannot find any rows for a mandatory table, the document is held.
+- Column headers within a table type can be reordered by dragging.
+
+
+---
+
+TAB 2: TRAINING
+
+Training allows users to improve extraction accuracy by providing feedback on real documents.
+
+Running a Test Extraction
+- User uploads a document on the Training tab. The file is persisted to storage so the feedback record has a stable document reference.
+- A PDF page viewer shows the document one page at a time (rendered via canvas, not iframe).
+- The system runs extraction: the document, schema, and the most relevant training feedback instances are sent to the VLM.
+- The extracted result is displayed — header field values and table rows — so the user can review it.
+
+Selecting Training Feedback for Inference
+Not all feedback instances are sent with every inference. The system uses embedding similarity to select the most relevant ones:
+- When a document is uploaded for extraction, a text embedding of the document description is generated (OpenAI text-embedding-3-small, 1536 dimensions).
+- This embedding is compared against stored feedback embeddings using pgvector similarity search.
+- Only the most similar feedback instances are included in the VLM prompt.
+- In the Training tab, users can see which feedback instance was used in a specific inference.
+
+Giving Feedback
+- If a field value is wrong, the user clicks the field and types feedback in natural language (e.g. "Do not capture the # symbol in the invoice number").
+- If a table cell or column is wrong, the user clicks the cell and types feedback (e.g. "Capture the Amount column, not Unit Price" or "Do not capture this table — it is just an illustration").
+- Pressing "Give Feedback" saves a training feedback instance linked to that document, field/table, and the feedback text.
+
+Re-Extracting
+- After giving feedback, the user can press "Re-extract" to run extraction again with the new feedback included.
+- This lets the user verify that the feedback improved the result without re-uploading a document.
+
+Viewing Feedback History
+- Users can see all training feedback instances they have created.
+- Each instance shows the document it came from, the field or table it applies to, the feedback text, and whether it was used in a recent inference.
+
+
+---
+
+TAB 3: HELD DOCUMENTS
+
+Documents that cannot be output by the extractor node are held here. There are two reasons a document is held:
+
+- Missing Mandatory (`missing_mandatory`): the VLM could not find a value for one or more mandatory fields or tables.
+- Hold All (`hold_all`): the extractor has a global "hold all documents" toggle enabled. Any document passing through is held regardless of extraction result, for manual review before sending out.
+
+Each held document shows:
+- The document name
+- The held reason badge (Missing Mandatory / Hold All)
+- The extracted metadata so far (what the VLM did capture)
+
+Actions on a Held Document
+- Give Feedback: if data is missing or wrong, the user can click into the field or cell, populate the correct value or type feedback (e.g. "Invoice number is found in the top right corner of page 1"), and press "Give Feedback". This creates a feedback instance exactly as in the Training tab.
+- Send Out: after reviewing and optionally giving feedback, the user can press "Send Out" to release the document to the next node in the workflow.
+
+Hold All Toggle
+There is an extractor-wide setting to hold all documents regardless of extraction outcome. When enabled, every document that passes through the extractor node is held here for manual review before send-out.
+
+
+---
+
+EXTRACTOR NODE IN THE WORKFLOW
+
+The extractor node plays a critical role in the reconciliation workflow. The reconciliation node requires that all incoming documents have already passed through an extractor node, because reconciliation relies on the extracted schema:
+- Header linking uses extracted header field values
+- Table row matching uses extracted table columns
+- Comparison expressions reference extracted field and table values by name
+
+Node Usage List
+On the extractor service page, users can see a list of all canvas nodes that are currently using this extractor (across all workflows). Clicking an entry navigates directly to that node on the workflow canvas.
