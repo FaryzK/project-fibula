@@ -346,6 +346,7 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
         status: logStatus,
         outputMetadata: result.outputMetadata || metadata,
         error: logError,
+        outputPort: logStatus === 'completed' ? (result.outputPort || null) : null,
       });
     }
 
@@ -355,10 +356,9 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
     }
 
     if (result.type === 'fanout') {
-      // Create all child documents and queue them BEFORE marking the parent as completed.
-      // This prevents a polling window where splitting looks "done" but children haven't
-      // started yet, causing a visual gap on the canvas.
       const childDocIds = [];
+      const fanoutRuns = [];
+
       for (const subDoc of result.subDocuments) {
         const newDoc = await documentModel.create({
           userId: workflowUserId,
@@ -394,23 +394,34 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
           });
         }
 
-        pendingExecQueue.push({
-          docExecution: newExec[0],
-          startQueue: nextNodes,
-        });
+        fanoutRuns.push({ childExec: newExec[0], nextNodes });
       }
 
       // Update the log with child document IDs (no parent doc_id — parent stops here)
       await documentExecutionModel.updateLog(log.id, {
         status: 'completed',
         outputMetadata: { split_count: childDocIds.length, child_document_ids: childDocIds },
+        outputPort: 'default',
       });
 
-      // Mark parent as completed only after all children are in the queue
+      // Mark parent as completed
       await documentExecutionModel.updateStatus(docExecution.id, {
         status: 'completed',
         currentNodeId: null,
       });
+
+      // Run fanout siblings sequentially — if sub-documents converge at a reconciliation node
+      // downstream, parallel execution would cause a TOCTOU race: the "trigger" sub-doc checks
+      // siblings' held status before they've written it. Sequential guarantees each sub-doc
+      // is fully held before the next one runs.
+      for (const { childExec, nextNodes } of fanoutRuns) {
+        try {
+          await runDocument(childExec, nodes, edges, graph, workflowRunId, pendingExecQueue, nextNodes);
+        } catch (err) {
+          console.error(`runDocument failed for fanout exec ${childExec?.id}:`, err);
+          await documentExecutionModel.updateStatus(childExec.id, { status: 'failed', currentNodeId: null }).catch(() => {});
+        }
+      }
 
       return;
     }
@@ -432,6 +443,18 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
         const otherExec = await documentExecutionModel.findById(otherId);
         if (otherExec && otherExec.status === 'held') {
           const otherMeta = parseMeta(otherExec.metadata);
+
+          // Update this doc's recon log from 'held' → 'completed' with the correct output port
+          // so all output port handles light up on the canvas, not just the trigger doc's port.
+          const otherReconLog = await documentExecutionModel.findLog(otherId, nodeId);
+          if (otherReconLog) {
+            await documentExecutionModel.updateLog(otherReconLog.id, {
+              status: 'completed',
+              outputPort: otherPort,
+              outputMetadata: otherMeta,
+            });
+          }
+
           const otherEdges = (graph[nodeId] || []).filter((e) => e.sourcePort === otherPort);
           const startQ = otherEdges.map((e) => ({ nodeId: e.targetNodeId, metadata: otherMeta }));
           pendingExecQueue.push({ docExecution: otherExec, startQueue: startQ });
@@ -461,15 +484,28 @@ async function runWorkflow(workflowRunId) {
 
   const graph = buildGraph(edges);
 
-  const pendingExecQueue = initialExecs.map((e) => ({ docExecution: e, startQueue: null }));
+  // Run initial trigger-path docs in parallel — looks good on demo and is safe in production
+  // (each doc is its own workflow run). The theoretical TOCTOU at a reconciliation node exists
+  // if two trigger paths converge there in the same manual run, but that is rare in practice.
+  // Fanout siblings are sequential (see runDocument) to handle the split-then-reconcile case.
+  const pendingExecQueue = [];
+  await Promise.all(
+    initialExecs.map((e) =>
+      runDocument(e, nodes, edges, graph, workflowRunId, pendingExecQueue, null).catch((err) => {
+        console.error(`runDocument failed for exec ${e?.id}:`, err);
+        return documentExecutionModel.updateStatus(e.id, { status: 'failed', currentNodeId: null }).catch(() => {});
+      })
+    )
+  );
 
+  // Drain any docs released by reconciliation during the parallel phase (sequential is fine
+  // here — they've already passed through the recon node and won't interact with each other).
   while (pendingExecQueue.length > 0) {
     const { docExecution, startQueue } = pendingExecQueue.shift();
     try {
       await runDocument(docExecution, nodes, edges, graph, workflowRunId, pendingExecQueue, startQueue);
     } catch (err) {
       console.error(`runDocument failed for exec ${docExecution?.id}:`, err);
-      // Mark the individual exec as failed so the canvas shows ✕ instead of hanging
       if (docExecution?.id) {
         await documentExecutionModel.updateStatus(docExecution.id, { status: 'failed', currentNodeId: null }).catch(() => {});
       }

@@ -214,7 +214,7 @@ const useCanvasStore = create((set, get) => ({
         const nodeStatuses = {};
         for (const item of statusRes.data) {
           if (!nodeStatuses[item.node_id]) nodeStatuses[item.node_id] = [];
-          nodeStatuses[item.node_id].push({ status: item.status, count: Number(item.count) });
+          nodeStatuses[item.node_id].push({ status: item.status, count: Number(item.count), output_port: item.output_port || null });
         }
 
         set({ runStatus: runRes.data.status, nodeStatuses });

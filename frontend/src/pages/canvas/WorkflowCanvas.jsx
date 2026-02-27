@@ -42,10 +42,13 @@ function CanvasInner() {
     triggerRun, clearRun, runStatus, uploading, uploadError, nodeStatuses,
   } = useCanvasStore();
 
-  // Colour edges green (animated) when the source node has completed documents
+  // Colour edges green (animated) only when docs have actually exited through that specific port
   const styledEdges = edges.map((edge) => {
     const srcStatuses = nodeStatuses[edge.source] || [];
-    const hasCompleted = srcStatuses.some((s) => s.status === 'completed' && s.count > 0);
+    const portId = edge.sourceHandle || 'default';
+    const hasCompleted = srcStatuses.some(
+      (s) => s.status === 'completed' && s.count > 0 && s.output_port === portId
+    );
     if (hasCompleted) {
       return { ...edge, style: { stroke: '#22c55e', strokeWidth: 2 }, animated: true };
     }
