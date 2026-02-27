@@ -346,6 +346,7 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
         status: logStatus,
         outputMetadata: result.outputMetadata || metadata,
         error: logError,
+        outputPort: logStatus === 'completed' ? (result.outputPort || null) : null,
       });
     }
 

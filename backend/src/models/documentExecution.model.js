@@ -54,9 +54,9 @@ module.exports = {
     return db(LOG_TABLE)
       .join(TABLE, `${LOG_TABLE}.document_execution_id`, `${TABLE}.id`)
       .where(`${TABLE}.workflow_run_id`, workflowRunId)
-      .select(`${LOG_TABLE}.node_id`, `${LOG_TABLE}.status`)
+      .select(`${LOG_TABLE}.node_id`, `${LOG_TABLE}.status`, `${LOG_TABLE}.output_port`)
       .count('* as count')
-      .groupBy(`${LOG_TABLE}.node_id`, `${LOG_TABLE}.status`);
+      .groupBy(`${LOG_TABLE}.node_id`, `${LOG_TABLE}.status`, `${LOG_TABLE}.output_port`);
   },
 
   // Log a node execution step
@@ -75,10 +75,11 @@ module.exports = {
     return row;
   },
 
-  async updateLog(logId, { status, outputMetadata, error }) {
+  async updateLog(logId, { status, outputMetadata, error, outputPort }) {
     const update = { status };
     if (outputMetadata !== undefined) update.output_metadata = JSON.stringify(outputMetadata);
     if (error !== undefined) update.error = error;
+    if (outputPort !== undefined) update.output_port = outputPort;
     if (['completed', 'failed', 'held'].includes(status)) update.completed_at = db.fn.now();
     const [row] = await db(LOG_TABLE).where({ id: logId }).update(update).returning('*');
     return row;

@@ -130,6 +130,13 @@ function FibulaNode({ id, data, selected }) {
   const runStatus = deriveNodeRunStatus(statusList);
   const totalDocs = statusList.reduce((sum, s) => sum + (s.count || 0), 0);
 
+  // Build a map of which output ports have had docs exit through them (for per-handle coloring)
+  const portStatusMap = {};
+  for (const s of statusList) {
+    if (s.output_port && s.status === 'completed') portStatusMap[s.output_port] = true;
+  }
+  const hasRunData = statusList.length > 0;
+
   // Reconciliation nodes hold docs as normal operating behavior — show ✓ instead of ⏸
   const isReconHeld = data.nodeType === 'RECONCILIATION' && runStatus === 'held';
   const statusLabel = isReconHeld ? RUN_STATUS_LABELS.completed : RUN_STATUS_LABELS[runStatus];
@@ -200,17 +207,22 @@ function FibulaNode({ id, data, selected }) {
         />
       ))}
 
-      {/* Output handles (right) */}
-      {outputHandles.map((h, i) => (
-        <Handle
-          key={h.id}
-          id={h.id}
-          type="source"
-          position={Position.Right}
-          style={hasMultipleOutputs ? { top: portTop(i) } : undefined}
-          className="!w-3 !h-3 !bg-indigo-500 !border-2 !border-white dark:!border-gray-800"
-        />
-      ))}
+      {/* Output handles (right) — green if docs have exited through that port, grey if unused during a run */}
+      {outputHandles.map((h, i) => {
+        const handleColor = !hasRunData
+          ? '!bg-indigo-500'
+          : portStatusMap[h.id] ? '!bg-green-500' : '!bg-gray-400';
+        return (
+          <Handle
+            key={h.id}
+            id={h.id}
+            type="source"
+            position={Position.Right}
+            style={hasMultipleOutputs ? { top: portTop(i) } : undefined}
+            className={`!w-3 !h-3 !border-2 !border-white dark:!border-gray-800 ${handleColor}`}
+          />
+        );
+      })}
     </div>
   );
 }
