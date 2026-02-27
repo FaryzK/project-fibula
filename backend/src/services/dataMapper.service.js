@@ -56,11 +56,23 @@ function evalCalculation(expression, schemaVal, mapsetVal) {
 async function applyRule(rule, metadata) {
   if (!rule.lookups || rule.lookups.length === 0) return metadata;
 
-  // Get all records from the first lookup's set (they all share the same set for a rule)
+  // Header and tables may be objects or JSON strings
+  const header = typeof metadata.header === 'string' ? JSON.parse(metadata.header) : (metadata.header || {});
+
+  // Resolve a schema field: try direct path first, then inside header
+  function resolveField(fieldPath) {
+    const direct = getField(metadata, fieldPath);
+    if (direct !== undefined) return direct;
+    // Schema field names from the extractor (e.g. "Vendor Name") live under header
+    const fromHeader = header[fieldPath];
+    if (fromHeader !== undefined) return fromHeader;
+    return undefined;
+  }
+
   // Collect distinct set IDs used in lookups
   const setIds = [...new Set(rule.lookups.map((l) => l.data_map_set_id))];
 
-  // Build a combined records map: setId → [record.values parsed]
+  // Build records map: setId → parsed records
   const recordsBySet = {};
   for (const setId of setIds) {
     const rawRecords = await dataMapperModel.findSetRecords(setId);
@@ -70,13 +82,12 @@ async function applyRule(rule, metadata) {
     });
   }
 
-  // Score each record against all lookups
-  // All lookups must match (AND logic)
+  // Score each record against all lookups (AND logic)
   let candidates = recordsBySet[setIds[0]] ? [...recordsBySet[setIds[0]]] : [];
 
   for (const lookup of rule.lookups) {
-    const schemaVal = getField(metadata, lookup.schema_field);
-    if (schemaVal === undefined) continue; // skip if field not present
+    const schemaVal = resolveField(lookup.schema_field);
+    if (schemaVal === undefined) continue;
 
     candidates = candidates
       .map((record) => {
@@ -95,20 +106,30 @@ async function applyRule(rule, metadata) {
 
   if (candidates.length === 0) return metadata;
 
-  // Best match: highest score, then first
   candidates.sort((a, b) => b.score - a.score);
   const bestRecord = candidates[0].record;
 
-  // Apply targets
-  const enriched = { ...metadata };
+  // Apply targets — write into header if the field exists there, else top-level
+  const enrichedHeader = { ...header };
+  const enriched = { ...metadata, header: enrichedHeader };
+
   for (const target of rule.targets || []) {
     const mapsetVal = bestRecord[target.map_set_column];
+    const field = target.schema_field;
 
+    let value;
     if (target.mode === 'calculation' && target.calculation_expression) {
-      const schemaVal = getField(metadata, target.schema_field);
-      enriched[target.schema_field] = evalCalculation(target.calculation_expression, schemaVal, mapsetVal);
+      const schemaVal = resolveField(field);
+      value = evalCalculation(target.calculation_expression, schemaVal, mapsetVal);
     } else {
-      enriched[target.schema_field] = mapsetVal;
+      value = mapsetVal;
+    }
+
+    // Write to header if the field lives there, otherwise top-level
+    if (field in enrichedHeader) {
+      enrichedHeader[field] = value;
+    } else {
+      enriched[field] = value;
     }
   }
 
