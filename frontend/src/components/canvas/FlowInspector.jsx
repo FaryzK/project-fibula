@@ -116,12 +116,31 @@ function RetriggerModal({ workflowId, execIds, onClose, onDone }) {
 
 // ─── Node Document Panel ──────────────────────────────────────────────────────
 
+// Tab config per node type
+// Returns [{ id, label }] in display order
+function getNodeTabs(nodeType) {
+  if (nodeType === 'RECONCILIATION') {
+    return [{ id: 'held', label: 'Held Documents' }, { id: 'failed', label: 'Failed' }];
+  }
+  const tabs = [{ id: 'processing', label: 'Processing' }];
+  if (nodeType === 'EXTRACTOR' || nodeType === 'DOCUMENT_FOLDER') {
+    tabs.push({ id: 'held', label: 'Held' });
+  }
+  tabs.push({ id: 'failed', label: 'Failed' });
+  return tabs;
+}
+
 function NodeDocumentPanel({ workflowId, node, onRetrigger }) {
-  const canHold = HOLD_CAPABLE.has(node.node_type);
-  const [activeTab, setActiveTab] = useState('processing');
+  const tabs = getNodeTabs(node.node_type);
+  const [activeTab, setActiveTab] = useState(tabs[0].id);
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(false);
   const intervalRef = useRef(null);
+
+  // Reset to first tab when node changes
+  useEffect(() => {
+    setActiveTab(getNodeTabs(node.node_type)[0].id);
+  }, [node.id, node.node_type]);
 
   const fetchDocs = useCallback(async () => {
     try {
@@ -143,7 +162,11 @@ function NodeDocumentPanel({ workflowId, node, onRetrigger }) {
     setDocs((prev) => prev.filter((d) => d.id !== execId));
   }
 
-  const tabs = ['processing', ...(canHold ? ['held'] : []), 'failed'];
+  const EMPTY_MESSAGES = {
+    processing: 'No documents currently processing.',
+    held: 'No documents held.',
+    failed: 'No failed documents.',
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -151,15 +174,15 @@ function NodeDocumentPanel({ workflowId, node, onRetrigger }) {
       <div className="flex border-b border-gray-200 dark:border-gray-700 px-4">
         {tabs.map((tab) => (
           <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-3 py-2 text-xs font-medium capitalize border-b-2 transition -mb-px ${
-              activeTab === tab
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`px-3 py-2 text-xs font-medium border-b-2 transition -mb-px ${
+              activeTab === tab.id
                 ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
                 : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
             }`}
           >
-            {tab}
+            {tab.label}
           </button>
         ))}
       </div>
@@ -171,9 +194,7 @@ function NodeDocumentPanel({ workflowId, node, onRetrigger }) {
         )}
         {!loading && docs.length === 0 && (
           <p className="text-xs text-gray-400 text-center py-8">
-            {activeTab === 'processing' && 'No documents currently processing.'}
-            {activeTab === 'held' && 'No documents held.'}
-            {activeTab === 'failed' && 'No failed documents.'}
+            {EMPTY_MESSAGES[activeTab] || 'No documents.'}
           </p>
         )}
         {docs.map((doc) => (

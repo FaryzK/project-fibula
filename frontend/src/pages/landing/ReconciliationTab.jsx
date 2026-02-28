@@ -77,12 +77,14 @@ function MatchingSetsPill({ sets, docExecId }) {
 }
 
 function ReconciliationTab() {
-  const [tab, setTab] = useState('anchor'); // 'anchor' | 'documents'
+  const [tab, setTab] = useState('anchor'); // 'anchor' | 'held' | 'pool'
   const [selectedRule, setSelectedRule] = useState(null); // null = rule list, rule obj = anchor docs
   const [anchorDocs, setAnchorDocs] = useState([]);
   const [anchorLoading, setAnchorLoading] = useState(false);
   const [heldDocs, setHeldDocs] = useState([]);
-  const [docsLoading, setDocsLoading] = useState(false);
+  const [heldLoading, setHeldLoading] = useState(false);
+  const [poolDocs, setPoolDocs] = useState([]);
+  const [poolLoading, setPoolLoading] = useState(false);
 
   const { rules, loading: rulesLoading, loadRules } = useReconciliationStore();
   const navigate = useNavigate();
@@ -99,15 +101,37 @@ function ReconciliationTab() {
       .finally(() => setAnchorLoading(false));
   }, [selectedRule]);
 
-  // Load held docs when Documents tab selected
+  // Load held-only docs when Held Documents tab selected
   useEffect(() => {
-    if (tab !== 'documents') return;
-    setDocsLoading(true);
-    reconciliationService.listHeldDocs()
+    if (tab !== 'held') return;
+    setHeldLoading(true);
+    reconciliationService.listHeldDocs('held')
       .then((data) => setHeldDocs(data))
       .catch(() => setHeldDocs([]))
-      .finally(() => setDocsLoading(false));
+      .finally(() => setHeldLoading(false));
   }, [tab]);
+
+  // Load all docs when Data Pool tab selected
+  useEffect(() => {
+    if (tab !== 'pool') return;
+    setPoolLoading(true);
+    reconciliationService.listHeldDocs()
+      .then((data) => setPoolDocs(data))
+      .catch(() => setPoolDocs([]))
+      .finally(() => setPoolLoading(false));
+  }, [tab]);
+
+  function handleDeletePoolDoc(docId) {
+    reconciliationService.deleteDoc(docId)
+      .then(() => setPoolDocs((prev) => prev.filter((d) => d.id !== docId)))
+      .catch(() => {});
+  }
+
+  function handleDeleteHeldDoc(docId) {
+    reconciliationService.deleteDoc(docId)
+      .then(() => setHeldDocs((prev) => prev.filter((d) => d.id !== docId)))
+      .catch(() => {});
+  }
 
   // Derive anchor status from its matching sets
   function anchorStatus(doc) {
@@ -132,14 +156,24 @@ function ReconciliationTab() {
             Rules
           </button>
           <button
-            onClick={() => setTab('documents')}
+            onClick={() => setTab('held')}
             className={`px-3 py-1.5 text-sm font-medium rounded-lg transition ${
-              tab === 'documents'
+              tab === 'held'
                 ? 'bg-indigo-600 text-white'
                 : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
             }`}
           >
-            Documents
+            Held Documents
+          </button>
+          <button
+            onClick={() => setTab('pool')}
+            className={`px-3 py-1.5 text-sm font-medium rounded-lg transition ${
+              tab === 'pool'
+                ? 'bg-indigo-600 text-white'
+                : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+            }`}
+          >
+            Data Pool
           </button>
         </div>
         <button
@@ -225,71 +259,118 @@ function ReconciliationTab() {
         </div>
       )}
 
-      {/* ── Documents tab ── */}
-      {tab === 'documents' && (
+      {/* ── Held Documents tab ── */}
+      {tab === 'held' && (
         <div>
-          {docsLoading ? (
+          {heldLoading ? (
             <div className="text-gray-400 text-sm">Loading…</div>
           ) : heldDocs.length === 0 ? (
+            <p className="text-gray-400 dark:text-gray-500 text-sm">
+              No documents currently held in reconciliation.
+            </p>
+          ) : (
+            <DocsTable docs={heldDocs} showStatus={false} navigate={navigate} onDelete={handleDeleteHeldDoc} />
+          )}
+        </div>
+      )}
+
+      {/* ── Data Pool tab ── */}
+      {tab === 'pool' && (
+        <div>
+          {poolLoading ? (
+            <div className="text-gray-400 text-sm">Loading…</div>
+          ) : poolDocs.length === 0 ? (
             <p className="text-gray-400 dark:text-gray-500 text-sm">
               No documents in reconciliation yet. Documents arrive via workflow.
             </p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-xs text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
-                    <th className="pb-2 pr-4 font-medium">Document</th>
-                    <th className="pb-2 pr-4 font-medium">Extractor</th>
-                    <th className="pb-2 pr-4 font-medium">Status</th>
-                    <th className="pb-2 pr-4 font-medium">Source</th>
-                    <th className="pb-2 pr-4 font-medium">Matching Sets</th>
-                    <th className="pb-2 font-medium"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                  {heldDocs.map((doc) => (
-                    <tr key={doc.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30 transition">
-                      <td className="py-2 pr-4 text-gray-900 dark:text-white font-medium">
-                        {doc.file_name || '—'}
-                      </td>
-                      <td className="py-2 pr-4 text-gray-500 dark:text-gray-400">
-                        {doc.extractor_name || '—'}
-                      </td>
-                      <td className="py-2 pr-4">
-                        <StatusBadge status={doc.status} />
-                      </td>
-                      <td className="py-2 pr-4 text-gray-500 dark:text-gray-400 text-xs">
-                        <div>{doc.workflow_name || '—'}</div>
-                        {doc.slot_label && (
-                          <div className="text-gray-400 dark:text-gray-500">{doc.slot_label}</div>
-                        )}
-                      </td>
-                      <td className="py-2 pr-4">
-                        <MatchingSetsPill sets={doc.matching_sets} docExecId={doc.document_execution_id} />
-                      </td>
-                      <td className="py-2">
-                        <button
-                          onClick={() => {
-                            if (!window.confirm('Permanently delete this document from reconciliation? This will also remove it from all matching sets.')) return;
-                            reconciliationService.deleteDoc(doc.document_execution_id)
-                              .then(() => setHeldDocs((prev) => prev.filter((d) => d.id !== doc.id)))
-                              .catch(() => alert('Failed to delete document.'));
-                          }}
-                          className="text-gray-400 hover:text-red-500 transition text-sm px-1"
-                          title="Remove document"
-                        >
-                          ✕
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DocsTable docs={poolDocs} showStatus navigate={navigate} onDelete={handleDeletePoolDoc} />
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function DocSourceLink({ doc, navigate }) {
+  const nodeName = doc.node_name || 'Deleted node';
+  const workflowName = doc.workflow_name || '—';
+
+  if (!doc.workflow_id) {
+    return (
+      <div className="text-xs text-gray-500 dark:text-gray-400">
+        <div>{workflowName}</div>
+        <div className="text-gray-400 dark:text-gray-500">{nodeName}</div>
+      </div>
+    );
+  }
+
+  const href = `/app/workflow/${doc.workflow_id}${doc.node_id ? `?node=${doc.node_id}` : ''}`;
+  return (
+    <div className="text-xs">
+      <button
+        onClick={() => navigate(href)}
+        className="text-indigo-600 dark:text-indigo-400 hover:underline text-left"
+      >
+        {workflowName}
+      </button>
+      <div className="text-gray-400 dark:text-gray-500">{nodeName}</div>
+    </div>
+  );
+}
+
+function DocsTable({ docs, showStatus, navigate, onDelete }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-xs text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
+            <th className="pb-2 pr-4 font-medium">Document</th>
+            <th className="pb-2 pr-4 font-medium">Extractor / Slot</th>
+            {showStatus && <th className="pb-2 pr-4 font-medium">Status</th>}
+            <th className="pb-2 pr-4 font-medium">Source</th>
+            <th className="pb-2 pr-4 font-medium">Matching Sets</th>
+            {onDelete && <th className="pb-2 font-medium" />}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+          {docs.map((doc) => (
+            <tr key={doc.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30 transition">
+              <td className="py-2 pr-4 text-gray-900 dark:text-white font-medium">
+                {doc.file_name || '—'}
+              </td>
+              <td className="py-2 pr-4 text-gray-500 dark:text-gray-400 text-xs">
+                <div>{doc.extractor_name || '—'}</div>
+                {doc.slot_label && (
+                  <div className="text-gray-400 dark:text-gray-500">{doc.slot_label}</div>
+                )}
+              </td>
+              {showStatus && (
+                <td className="py-2 pr-4">
+                  <StatusBadge status={doc.status} />
+                </td>
+              )}
+              <td className="py-2 pr-4">
+                <DocSourceLink doc={doc} navigate={navigate} />
+              </td>
+              <td className="py-2 pr-4">
+                <MatchingSetsPill sets={doc.matching_sets} docExecId={doc.document_execution_id} />
+              </td>
+              {onDelete && (
+                <td className="py-2 pl-2">
+                  <button
+                    onClick={() => onDelete(doc.id)}
+                    className="text-xs text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 transition"
+                    title="Remove from pool"
+                  >
+                    Remove
+                  </button>
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

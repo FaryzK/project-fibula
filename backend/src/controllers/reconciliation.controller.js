@@ -139,10 +139,11 @@ module.exports = {
 
   // ── New Phase 10 endpoints ──────────────────────────────────────────────
 
-  // GET /reconciliation-rules/documents
+  // GET /reconciliation-rules/documents?status=held  (omit status for all)
   async listHeldDocs(req, res, next) {
     try {
-      const heldDocs = await reconciliationModel.findHeldDocs(req.dbUser.id);
+      const statusFilter = req.query.status || null;
+      const heldDocs = await reconciliationModel.findHeldDocs(req.dbUser.id, statusFilter);
       const enriched = await Promise.all(
         heldDocs.map(async (doc) => {
           const matchingSets = await reconciliationModel.findHeldDocMatchingSets(doc.document_execution_id);
@@ -183,7 +184,7 @@ module.exports = {
   async deleteDoc(req, res, next) {
     try {
       const heldDoc = await db('reconciliation_held_documents')
-        .where({ document_execution_id: req.params.heldDocId, user_id: req.dbUser.id })
+        .where({ id: req.params.heldDocId, user_id: req.dbUser.id })
         .first();
       if (!heldDoc) return res.status(404).json({ error: 'Not found' });
 

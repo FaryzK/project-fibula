@@ -408,20 +408,24 @@ module.exports = {
     return row;
   },
 
-  async findHeldDocs(userId) {
-    return db(HELD_DOCS)
+  async findHeldDocs(userId, statusFilter = null) {
+    const q = db(HELD_DOCS)
       .join(DOC_EXECUTIONS, `${HELD_DOCS}.document_execution_id`, `${DOC_EXECUTIONS}.id`)
       .join(DOCUMENTS, `${DOC_EXECUTIONS}.document_id`, `${DOCUMENTS}.id`)
       .leftJoin(WORKFLOWS, `${HELD_DOCS}.workflow_id`, `${WORKFLOWS}.id`)
+      .leftJoin(NODES, `${HELD_DOCS}.node_id`, `${NODES}.id`)
       .join('extractors', `${HELD_DOCS}.extractor_id`, 'extractors.id')
       .where(`${HELD_DOCS}.user_id`, userId)
       .select(
         `${HELD_DOCS}.*`,
         `${DOCUMENTS}.file_name`,
         `${WORKFLOWS}.name as workflow_name`,
+        `${NODES}.name as node_name`,
         'extractors.name as extractor_name',
       )
       .orderBy(`${HELD_DOCS}.held_at`, 'desc');
+    if (statusFilter) q.where(`${HELD_DOCS}.status`, statusFilter);
+    return q;
   },
 
   // Find non-rejected held docs for a specific extractor, with their metadata from document_executions.

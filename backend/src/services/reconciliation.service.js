@@ -475,10 +475,8 @@ async function finaliseSet(setId, rule, variation, allExtractors) {
   const fullyReconciled = await reconciliationModel.isVariationFullyReconciled(setId, variation.id);
   if (fullyReconciled) {
     await reconciliationModel.updateMatchingSetStatus(setId, 'reconciled');
-    const anchorHeld = await reconciliationModel.findHeldDocByDocExecId(setDocs.find(
-      (d) => d.extractor_id === rule.anchor_extractor_id
-    )?.document_execution_id);
-    if (anchorHeld) await reconciliationModel.updateHeldDocStatus(anchorHeld.id, 'reconciled');
+    // Note: held doc status is NOT updated here — "matching set reconciled" means comparisons passed,
+    // not that the doc was sent out. Status is updated only at the actual release points below.
   }
   return { fullyReconciled, setDocs };
 }
@@ -549,13 +547,11 @@ async function processDocument({ docExecutionId, metadata, workflowId, nodeId, u
           await backfillHeldDocsToSet(setId, rule, variation, userId);
         }
 
-        const { fullyReconciled, setDocs: finalDocs } = await finaliseSet(setId, rule, variation, allExtractors);
+        const { fullyReconciled } = await finaliseSet(setId, rule, variation, allExtractors);
+        // Only the anchor doc itself is released — target docs are handled by their own anchor rules
         if (fullyReconciled && rule.auto_send_out) {
-          for (const doc of finalDocs) {
-            if (doc.document_execution_id === docExecutionId) continue;
-            const hd = await reconciliationModel.findHeldDocByDocExecId(doc.document_execution_id);
-            setDocExecIds.push({ docExecutionId: doc.document_execution_id, outputPort: hd?.slot_id || slotId });
-          }
+          const anchorHeld = await reconciliationModel.findHeldDocByDocExecId(docExecutionId);
+          if (anchorHeld) await reconciliationModel.updateHeldDocStatus(anchorHeld.id, 'reconciled');
           shouldContinue = true;
         }
       }
@@ -581,14 +577,16 @@ async function processDocument({ docExecutionId, metadata, workflowId, nodeId, u
           // Retroactively pull in held docs of still-missing types
           await backfillHeldDocsToSet(set.id, rule, variation, userId);
 
+          // Run comparisons and update matching set status.
+          // If auto_send_out, release only the anchor doc — target docs are handled by their own rules.
           const { fullyReconciled, setDocs: finalDocs } = await finaliseSet(set.id, rule, variation, allExtractors);
           if (fullyReconciled && rule.auto_send_out) {
-            for (const doc of finalDocs) {
-              if (doc.document_execution_id === docExecutionId) continue;
-              const hd = await reconciliationModel.findHeldDocByDocExecId(doc.document_execution_id);
-              setDocExecIds.push({ docExecutionId: doc.document_execution_id, outputPort: hd?.slot_id || slotId });
+            const anchorDoc = finalDocs.find((d) => d.extractor_id === rule.anchor_extractor_id);
+            if (anchorDoc && anchorDoc.document_execution_id !== docExecutionId) {
+              const hd = await reconciliationModel.findHeldDocByDocExecId(anchorDoc.document_execution_id);
+              if (hd) await reconciliationModel.updateHeldDocStatus(hd.id, 'reconciled');
+              setDocExecIds.push({ docExecutionId: anchorDoc.document_execution_id, outputPort: hd?.slot_id || slotId });
             }
-            shouldContinue = true;
           }
         }
       }
@@ -604,7 +602,8 @@ async function processDocument({ docExecutionId, metadata, workflowId, nodeId, u
     };
   }
 
-  return { type: 'hold' };
+  // Arriving doc stays held, but some already-held anchor docs may now be releasable.
+  return { type: 'hold', setDocExecIds };
 }
 
 module.exports = { processDocument, runAndRecordComparisons, runSingleComparison };
