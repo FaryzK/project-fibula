@@ -173,6 +173,40 @@ If the current extractor has no held documents, the change saves immediately wit
 
 ---
 
+RECONCILIATION NODE RECONFIGURATION WARNING
+
+When a user changes the extractor assigned to an existing slot in a RECONCILIATION node (switching from extractor A to extractor B), or removes a slot entirely, the system checks whether any held documents exist for that slot at this node.
+
+If held documents exist for the affected slot, a warning modal appears before the change is saved:
+- Shows how many held documents exist for that slot at this node
+- Notes that those documents will be moved to Orphaned Documents and removed from the reconciliation data pool and any matching sets they belong to
+
+Actions in the modal:
+- Cancel — dismiss and keep the current slot configuration; no change is made
+- Proceed — save the change and orphan any held documents for that slot
+
+Since reconciliation node slots auto-save immediately when the user changes a dropdown (per-slot save, not whole-node save), the warning is triggered per slot at the point of each change.
+
+When held documents are orphaned due to slot reconfiguration or removal:
+- Their document_executions status is set to 'orphaned' and they appear in the Orphaned panel
+- Their reconciliation_held_documents records are deleted so they no longer appear in the reconciliation Held Documents tab or Data Pool
+- Their reconciliation_matching_set_docs entries are removed and any affected matching sets are cleaned up
+
+If no held documents exist for the affected slot, the change saves immediately without a warning.
+
+
+RECONCILIATION NODE DELETION
+
+When a RECONCILIATION node is deleted, the standard node deletion warning applies (see NODE DELETION WARNING above). In addition to the standard orphaning of document_executions, the following reconciliation-specific cleanup occurs:
+
+- All reconciliation_held_documents records for this node are deleted, removing those documents from the reconciliation Held Documents tab and Data Pool
+- Their reconciliation_matching_set_docs entries are removed and any affected matching sets are cleaned up
+
+This cleanup happens whether or not the user was warned (i.e. even if the node had no held document_executions but did have reconciliation data pool records, the pool records are removed).
+
+
+---
+
 RE-TRIGGER FLOW
 
 Re-triggering sends a document back into the workflow from the beginning. The original file stored in Supabase Storage is reused — no re-upload is required.

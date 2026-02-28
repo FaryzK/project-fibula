@@ -13,6 +13,10 @@ const reconciliationService = {
   getMatchingSet: (ruleId, setId) =>
     api.get(`/reconciliation-rules/${ruleId}/matching-sets/${setId}`).then((r) => r.data),
 
+  // Count held docs for a specific reconciliation node slot (used for slot change warning)
+  countHeldAtSlot: (nodeId, slotId) =>
+    api.get('/reconciliation-rules/slots/held-count', { params: { nodeId, slotId } }).then((r) => r.data.count),
+
   // New: Held documents pool
   // statusFilter: 'held' for only unreconciled docs, omit for all (Data Pool)
   listHeldDocs: (statusFilter) =>

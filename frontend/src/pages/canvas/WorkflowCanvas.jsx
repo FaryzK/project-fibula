@@ -301,6 +301,7 @@ function CanvasInner() {
               onConnectEnd={handleConnectEnd}
               onEdgeClick={handleEdgeClick}
               onNodeDoubleClick={handleNodeDoubleClick}
+              deleteKeyCode={null}
               fitView
               proOptions={{ hideAttribution: true }}
             >

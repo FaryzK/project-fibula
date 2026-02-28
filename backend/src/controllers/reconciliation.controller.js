@@ -139,6 +139,18 @@ module.exports = {
 
   // ── New Phase 10 endpoints ──────────────────────────────────────────────
 
+  // GET /reconciliation-rules/slots/held-count?nodeId=...&slotId=...
+  async countHeldAtSlot(req, res, next) {
+    try {
+      const { nodeId, slotId } = req.query;
+      if (!nodeId || !slotId) return res.status(400).json({ error: 'nodeId and slotId are required' });
+      const count = await reconciliationModel.countHeldAtNodeSlot(nodeId, slotId);
+      return res.json({ count });
+    } catch (err) {
+      next(err);
+    }
+  },
+
   // GET /reconciliation-rules/documents?status=held  (omit status for all)
   async listHeldDocs(req, res, next) {
     try {

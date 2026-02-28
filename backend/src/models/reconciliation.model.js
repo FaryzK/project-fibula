@@ -533,4 +533,63 @@ module.exports = {
       return res && (res.status === 'auto' || res.status === 'force');
     });
   },
+
+  // ── Reconciliation node cleanup ───────────────────────────────────────────
+
+  async countHeldAtNodeSlot(nodeId, slotId) {
+    const [{ count }] = await db(HELD_DOCS)
+      .where({ node_id: nodeId, slot_id: slotId, status: 'held' })
+      .count('* as count');
+    return Number(count);
+  },
+
+  // Orphan all reconciliation_held_documents records for a specific slot at a node.
+  // Also removes matching set membership. Updates document_executions to 'orphaned' if still held.
+  async orphanReconSlotDocs(nodeId, slotId, nodeName) {
+    const heldDocs = await db(HELD_DOCS)
+      .where({ node_id: nodeId, slot_id: slotId })
+      .select('id', 'document_execution_id');
+    if (!heldDocs.length) return 0;
+
+    const docExecIds = heldDocs.map((d) => d.document_execution_id);
+    const heldDocIds = heldDocs.map((d) => d.id);
+
+    // Remove from matching sets (anchor sets cascade; target membership removed directly)
+    await db(MATCHING_SETS).whereIn('anchor_document_execution_id', docExecIds).delete();
+    await db(SET_DOCS).whereIn('document_execution_id', docExecIds).delete();
+
+    // Delete reconciliation held doc records (removes from data pool)
+    await db(HELD_DOCS).whereIn('id', heldDocIds).delete();
+
+    // Orphan document_executions that are still held at this node
+    await db(DOC_EXECUTIONS)
+      .whereIn('id', docExecIds)
+      .where({ status: 'held' })
+      .update({
+        status: 'orphaned',
+        current_node_id: null,
+        orphaned_node_name: nodeName,
+        updated_at: db.fn.now(),
+      });
+
+    return heldDocs.length;
+  },
+
+  // Clean up all reconciliation_held_documents for a node (called on node deletion).
+  // document_executions orphaning is handled separately by orphanHeldDocs; this only cleans recon-specific data.
+  async orphanAllReconNodeDocs(nodeId) {
+    const heldDocs = await db(HELD_DOCS)
+      .where({ node_id: nodeId })
+      .select('id', 'document_execution_id');
+    if (!heldDocs.length) return 0;
+
+    const docExecIds = heldDocs.map((d) => d.document_execution_id);
+    const heldDocIds = heldDocs.map((d) => d.id);
+
+    await db(MATCHING_SETS).whereIn('anchor_document_execution_id', docExecIds).delete();
+    await db(SET_DOCS).whereIn('document_execution_id', docExecIds).delete();
+    await db(HELD_DOCS).whereIn('id', heldDocIds).delete();
+
+    return heldDocs.length;
+  },
 };
