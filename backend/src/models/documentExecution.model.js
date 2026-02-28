@@ -198,4 +198,15 @@ module.exports = {
   async deleteExecution(id) {
     await db(TABLE).where({ id }).delete();
   },
+
+  // Called on server startup to clean up any executions and runs left in a processing/running
+  // state by a previous server session that was killed mid-execution.
+  async cleanupStaleProcessing() {
+    await db(TABLE)
+      .where('status', 'processing')
+      .update({ status: 'failed', current_node_id: null, updated_at: db.fn.now() });
+    await db('workflow_runs')
+      .where('status', 'running')
+      .update({ status: 'failed', completed_at: db.fn.now() });
+  },
 };

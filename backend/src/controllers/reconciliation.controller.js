@@ -170,6 +170,9 @@ module.exports = {
         .where({ document_execution_id: heldDoc.document_execution_id })
         .delete();
 
+      // document_execution stays held — the doc is still held at the recon node,
+      // just marked rejected within the reconciliation service.
+
       return res.status(204).end();
     } catch (err) {
       next(err);
@@ -199,6 +202,12 @@ module.exports = {
       await db('reconciliation_held_documents')
         .where({ id: heldDoc.id })
         .delete();
+
+      // Sync document_execution out of held state so Flow Inspector doesn't show it as held
+      await documentExecutionModel.updateStatus(heldDoc.document_execution_id, {
+        status: 'completed',
+        currentNodeId: null,
+      });
 
       return res.status(204).end();
     } catch (err) {
