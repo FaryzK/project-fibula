@@ -511,6 +511,7 @@ function NodePanel({ node, onClose }) {
   const [nodeLog, setNodeLog] = useState(null);
   const [nodeDeleteWarning, setNodeDeleteWarning] = useState(null); // { heldCount } | null
   const [extractorChangeWarning, setExtractorChangeWarning] = useState(null); // { pendingConfig, heldCount } | null
+  const [reconSlotChangeWarning, setReconSlotChangeWarning] = useState(null); // { pendingConfig, heldCount, action: 'change'|'remove' } | null
 
   useEffect(() => {
     if (nodeType === 'SPLITTING') splittingService.getAll().then(({ data }) => setSplittingOptions(data));
@@ -875,8 +876,22 @@ function NodePanel({ node, onClose }) {
                       s.id === slot.id ? { ...s, extractor_id: e.target.value, label: selected?.name || '', extractor_name: selected?.name || '' } : s
                     );
                     const newConfig = { ...config, recon_inputs: updated };
-                    setConfig(newConfig);
-                    saveConfig(newConfig);
+                    const oldExtractorId = slot.extractor_id;
+                    if (oldExtractorId && e.target.value !== oldExtractorId) {
+                      reconciliationService.countHeldAtSlot(node.id, slot.id)
+                        .then((count) => {
+                          if (count > 0) {
+                            setReconSlotChangeWarning({ pendingConfig: newConfig, heldCount: count, action: 'change' });
+                          } else {
+                            setConfig(newConfig);
+                            saveConfig(newConfig);
+                          }
+                        })
+                        .catch(() => { setConfig(newConfig); saveConfig(newConfig); });
+                    } else {
+                      setConfig(newConfig);
+                      saveConfig(newConfig);
+                    }
                   }}
                   className="flex-1 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-1 focus:ring-indigo-500"
                 >
@@ -889,8 +904,21 @@ function NodePanel({ node, onClose }) {
                   onClick={() => {
                     const updated = (config.recon_inputs || []).filter((s) => s.id !== slot.id);
                     const newConfig = { ...config, recon_inputs: updated };
-                    setConfig(newConfig);
-                    saveConfig(newConfig);
+                    if (slot.extractor_id) {
+                      reconciliationService.countHeldAtSlot(node.id, slot.id)
+                        .then((count) => {
+                          if (count > 0) {
+                            setReconSlotChangeWarning({ pendingConfig: newConfig, heldCount: count, action: 'remove' });
+                          } else {
+                            setConfig(newConfig);
+                            saveConfig(newConfig);
+                          }
+                        })
+                        .catch(() => { setConfig(newConfig); saveConfig(newConfig); });
+                    } else {
+                      setConfig(newConfig);
+                      saveConfig(newConfig);
+                    }
                   }}
                   className="text-gray-400 hover:text-red-500 transition text-sm font-medium px-1"
                   title="Remove"
@@ -1028,6 +1056,45 @@ function NodePanel({ node, onClose }) {
                 setConfig(extractorChangeWarning.pendingConfig);
                 saveConfig(extractorChangeWarning.pendingConfig);
                 setExtractorChangeWarning(null);
+              }}
+              className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition"
+            >
+              Proceed
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Reconciliation slot change/remove warning — shown when a slot with held docs is modified */}
+    {reconSlotChangeWarning && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-sm mx-4">
+          <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white">
+              {reconSlotChangeWarning.action === 'remove' ? 'Remove slot' : 'Change slot extractor'}
+            </h2>
+          </div>
+          <div className="px-5 py-4 text-sm text-gray-700 dark:text-gray-300 space-y-2">
+            <p>
+              This slot has <strong>{reconSlotChangeWarning.heldCount}</strong> held document{reconSlotChangeWarning.heldCount !== 1 ? 's' : ''}.
+            </p>
+            <p>
+              If you proceed, those documents will be moved to Orphaned Documents and removed from the reconciliation data pool.
+            </p>
+          </div>
+          <div className="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
+            <button
+              onClick={() => setReconSlotChangeWarning(null)}
+              className="px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                setConfig(reconSlotChangeWarning.pendingConfig);
+                saveConfig(reconSlotChangeWarning.pendingConfig);
+                setReconSlotChangeWarning(null);
               }}
               className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition"
             >

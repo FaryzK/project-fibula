@@ -18,6 +18,7 @@ jest.mock('../../src/models/user.model');
 jest.mock('../../src/models/node.model');
 jest.mock('../../src/models/edge.model');
 jest.mock('../../src/models/documentExecution.model');
+jest.mock('../../src/models/reconciliation.model');
 jest.mock('../../src/middleware/dbUser.middleware', () => (req, res, next) => {
   req.dbUser = { id: 'db-uuid-1', supabase_auth_id: 'supabase-uid-1' };
   next();
@@ -29,6 +30,7 @@ const userModel = require('../../src/models/user.model');
 const nodeModel = require('../../src/models/node.model');
 const edgeModel = require('../../src/models/edge.model');
 const documentExecutionModel = require('../../src/models/documentExecution.model');
+const reconciliationModel = require('../../src/models/reconciliation.model');
 
 const FAKE_USER = { id: 'supabase-uid-1' };
 const FAKE_DB_USER = { id: 'db-uuid-1', supabase_auth_id: 'supabase-uid-1' };
@@ -46,6 +48,8 @@ beforeEach(() => {
   documentExecutionModel.countHeldAtNode.mockResolvedValue(0);
   documentExecutionModel.orphanHeldDocs.mockResolvedValue();
   documentExecutionModel.orphanExtractorHeldDocs.mockResolvedValue(0);
+  reconciliationModel.orphanReconSlotDocs.mockResolvedValue(0);
+  reconciliationModel.orphanAllReconNodeDocs.mockResolvedValue(0);
 });
 
 describe('Node routes', () => {
