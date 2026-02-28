@@ -509,6 +509,8 @@ function NodePanel({ node, onClose }) {
   const [nodeName, setNodeName] = useState(node.data.label);
   const [renamingNode, setRenamingNode] = useState(false);
   const [nodeLog, setNodeLog] = useState(null);
+  const [nodeDeleteWarning, setNodeDeleteWarning] = useState(null); // { heldCount } | null
+  const [extractorChangeWarning, setExtractorChangeWarning] = useState(null); // { pendingConfig, heldCount } | null
 
   useEffect(() => {
     if (nodeType === 'SPLITTING') splittingService.getAll().then(({ data }) => setSplittingOptions(data));
@@ -560,8 +562,10 @@ function NodePanel({ node, onClose }) {
   }
 
   async function handleDelete() {
-    if (window.confirm(`Delete node "${node.data.label}"?`)) {
-      await deleteNode(node.id);
+    const result = await deleteNode(node.id);
+    if (result?.heldCount) {
+      setNodeDeleteWarning({ heldCount: result.heldCount });
+    } else {
       onClose();
     }
   }
@@ -574,6 +578,7 @@ function NodePanel({ node, onClose }) {
   const needsSaveButton = ['IF', 'SWITCH', 'SET_VALUE', 'HTTP', 'WEBHOOK'].includes(nodeType);
 
   return (
+    <>
     <div className="w-80 bg-white dark:bg-gray-800 border-l border-gray-200 dark:border-gray-700 flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700">
@@ -753,9 +758,26 @@ function NodePanel({ node, onClose }) {
             <select
               value={config.extractor_id || ''}
               onChange={(e) => {
-                const newConfig = { ...config, extractor_id: e.target.value || null };
-                setConfig(newConfig);
-                saveConfig(newConfig);
+                const newExtractorId = e.target.value || null;
+                const oldExtractorId = config.extractor_id || null;
+                const newConfig = { ...config, extractor_id: newExtractorId };
+                // If switching away from an existing extractor, check for held docs first
+                if (oldExtractorId && newExtractorId !== oldExtractorId) {
+                  extractorService.listHeld(oldExtractorId).then((held) => {
+                    if (held.length > 0) {
+                      setExtractorChangeWarning({ pendingConfig: newConfig, heldCount: held.length });
+                    } else {
+                      setConfig(newConfig);
+                      saveConfig(newConfig);
+                    }
+                  }).catch(() => {
+                    setConfig(newConfig);
+                    saveConfig(newConfig);
+                  });
+                } else {
+                  setConfig(newConfig);
+                  saveConfig(newConfig);
+                }
               }}
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
             >
@@ -940,6 +962,82 @@ function NodePanel({ node, onClose }) {
         </div>
       </div>
     </div>
+
+    {/* Node deletion warning — shown when the node has held documents */}
+    {nodeDeleteWarning && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-sm mx-4">
+          <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Delete node</h2>
+          </div>
+          <div className="px-5 py-4 text-sm text-gray-700 dark:text-gray-300 space-y-2">
+            <p>
+              This node has <strong>{nodeDeleteWarning.heldCount}</strong> held document{nodeDeleteWarning.heldCount !== 1 ? 's' : ''}.
+            </p>
+            <p>
+              Processing documents will be allowed to complete naturally. If they later reach the deleted node, they will fail and appear in the Failed tab.
+            </p>
+            <p>If you proceed, all held documents will be moved to Orphaned Documents.</p>
+          </div>
+          <div className="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
+            <button
+              onClick={() => setNodeDeleteWarning(null)}
+              className="px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={async () => {
+                await deleteNode(node.id, true);
+                setNodeDeleteWarning(null);
+                onClose();
+              }}
+              className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition"
+            >
+              Proceed
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Extractor change warning — shown when switching extractors with held documents */}
+    {extractorChangeWarning && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-sm mx-4">
+          <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Change extractor</h2>
+          </div>
+          <div className="px-5 py-4 text-sm text-gray-700 dark:text-gray-300 space-y-2">
+            <p>
+              The current extractor has <strong>{extractorChangeWarning.heldCount}</strong> held document{extractorChangeWarning.heldCount !== 1 ? 's' : ''}.
+            </p>
+            <p>
+              Any held documents at this node for the current extractor will be moved to Orphaned Documents.
+            </p>
+          </div>
+          <div className="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
+            <button
+              onClick={() => setExtractorChangeWarning(null)}
+              className="px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                setConfig(extractorChangeWarning.pendingConfig);
+                saveConfig(extractorChangeWarning.pendingConfig);
+                setExtractorChangeWarning(null);
+              }}
+              className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition"
+            >
+              Proceed
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 

@@ -52,6 +52,8 @@ beforeEach(() => {
   supabase.auth.getUser.mockResolvedValue({ data: { user: FAKE_USER }, error: null });
   userModel.findBySupabaseId.mockResolvedValue(FAKE_DB_USER);
   workflowModel.findById.mockResolvedValue(FAKE_WORKFLOW);
+  documentExecutionModel.markRetriggered.mockResolvedValue();
+  documentExecutionModel.getOrphanedDocs.mockResolvedValue([]);
 });
 
 // ─── Document Upload ────────────────────────────────────────────────────────
@@ -180,5 +182,47 @@ describe('GET /api/runs/:runId/node-statuses', () => {
     const res = await request(app).get('/api/runs/run-1/node-statuses').set(authHeaders());
     expect(res.statusCode).toBe(200);
     expect(res.body).toHaveLength(2);
+  });
+});
+
+// ─── Flow Inspector — Orphaned panel ────────────────────────────────────────
+
+describe('GET /api/workflows/:id/flow-inspector/orphaned', () => {
+  it('returns orphaned documents for the workflow', async () => {
+    documentExecutionModel.getOrphanedDocs.mockResolvedValue([
+      { id: 'de-1', file_name: 'invoice.pdf', document_id: 'doc-1', orphaned_node_name: 'Old Extractor', updated_at: '2025-01-01' },
+    ]);
+    const res = await request(app).get('/api/workflows/wf-1/flow-inspector/orphaned').set(authHeaders());
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0].orphaned_node_name).toBe('Old Extractor');
+  });
+});
+
+// ─── Flow Inspector — Re-trigger ─────────────────────────────────────────────
+
+describe('POST /api/workflows/:id/flow-inspector/retrigger', () => {
+  it('returns 400 when execIds or triggerNodeIds are missing', async () => {
+    const res = await request(app)
+      .post('/api/workflows/wf-1/flow-inspector/retrigger')
+      .set(authHeaders())
+      .send({ execIds: ['de-1'] }); // missing triggerNodeIds
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('creates a new run and marks orphaned executions as retriggered', async () => {
+    documentExecutionModel.findById.mockResolvedValue({ id: 'de-1', document_id: 'doc-1' });
+    workflowRunModel.create.mockResolvedValue({ id: 'run-new' });
+    documentExecutionModel.createMany.mockResolvedValue([]);
+    executionService.runWorkflow.mockResolvedValue();
+
+    const res = await request(app)
+      .post('/api/workflows/wf-1/flow-inspector/retrigger')
+      .set(authHeaders())
+      .send({ execIds: ['de-1'], triggerNodeIds: ['n-trigger'] });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.body.runId).toBe('run-new');
+    expect(documentExecutionModel.markRetriggered).toHaveBeenCalledWith(['de-1']);
   });
 });

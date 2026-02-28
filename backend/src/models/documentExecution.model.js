@@ -174,8 +174,18 @@ module.exports = {
       .orderBy('de.updated_at', 'desc');
   },
 
-  // Mark all held docs at a node as orphaned (called on node deletion)
+  // Mark all held docs at a node as orphaned (called on node deletion).
+  // Also removes their extractor_held_documents records so they no longer appear in the extractor's Held tab.
   async orphanHeldDocs(nodeId, nodeName) {
+    const executions = await db(TABLE)
+      .where({ current_node_id: nodeId, status: 'held' })
+      .select('id');
+
+    if (executions.length) {
+      const execIds = executions.map((e) => e.id);
+      await db('extractor_held_documents').whereIn('document_execution_id', execIds).delete();
+    }
+
     return db(TABLE)
       .where({ current_node_id: nodeId, status: 'held' })
       .update({
@@ -184,6 +194,36 @@ module.exports = {
         orphaned_node_name: nodeName,
         updated_at: db.fn.now(),
       });
+  },
+
+  // Orphan held docs at a node that belong to a specific extractor (called when node extractor is reconfigured).
+  // Also deletes the extractor_held_documents records so they no longer appear in the extractor's Held tab.
+  async orphanExtractorHeldDocs(nodeId, oldExtractorId, nodeName) {
+    const rows = await db('extractor_held_documents as ehd')
+      .join(TABLE + ' as de', 'de.id', 'ehd.document_execution_id')
+      .where('de.current_node_id', nodeId)
+      .where('de.status', 'held')
+      .where('ehd.extractor_id', oldExtractorId)
+      .where('ehd.status', 'held')
+      .select('de.id as doc_exec_id', 'ehd.id as held_id');
+
+    if (!rows.length) return 0;
+
+    const docExecIds = rows.map((r) => r.doc_exec_id);
+    const heldIds = rows.map((r) => r.held_id);
+
+    await db(TABLE)
+      .whereIn('id', docExecIds)
+      .update({
+        status: 'orphaned',
+        current_node_id: null,
+        orphaned_node_name: nodeName,
+        updated_at: db.fn.now(),
+      });
+
+    await db('extractor_held_documents').whereIn('id', heldIds).delete();
+
+    return rows.length;
   },
 
   // Count held docs at a node (used for deletion warning)
@@ -197,6 +237,16 @@ module.exports = {
   // Delete a document execution record
   async deleteExecution(id) {
     await db(TABLE).where({ id }).delete();
+  },
+
+  // Mark orphaned executions as completed after re-triggering, removing them from the Orphaned panel.
+  // Only affects executions with status = 'orphaned' (safe to call with mixed failed/orphaned IDs).
+  async markRetriggered(execIds) {
+    if (!execIds || !execIds.length) return;
+    return db(TABLE)
+      .whereIn('id', execIds)
+      .where('status', 'orphaned')
+      .update({ status: 'completed', current_node_id: null, updated_at: db.fn.now() });
   },
 
   // Called on server startup to clean up any executions and runs left in a processing/running

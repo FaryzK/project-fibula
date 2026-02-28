@@ -252,6 +252,16 @@ module.exports = {
       .limit(limit);
   },
 
+  // Returns distinct documents uploaded as training feedback for this extractor
+  async findTrainingDocuments(extractorId) {
+    return db(FEEDBACK)
+      .join(DOCUMENTS, `${FEEDBACK}.document_id`, `${DOCUMENTS}.id`)
+      .where(`${FEEDBACK}.extractor_id`, extractorId)
+      .whereNotNull(`${FEEDBACK}.document_id`)
+      .distinct(`${DOCUMENTS}.id`, `${DOCUMENTS}.file_url`)
+      .select(`${DOCUMENTS}.id`, `${DOCUMENTS}.file_url`);
+  },
+
   async findUsage(extractorId) {
     return db(NODES)
       .join(WORKFLOWS, `${NODES}.workflow_id`, `${WORKFLOWS}.id`)

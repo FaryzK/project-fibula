@@ -27,6 +27,21 @@ async function create(req, res, next) {
 
 async function update(req, res, next) {
   try {
+    // When an EXTRACTOR node's extractor_id is changed, orphan held docs from the old extractor
+    if (req.body.config && req.body.config.extractor_id) {
+      const currentNode = await nodeModel.findById(req.params.nodeId);
+      if (currentNode && currentNode.node_type === 'EXTRACTOR') {
+        const oldExtractorId = currentNode.config && currentNode.config.extractor_id;
+        const newExtractorId = req.body.config.extractor_id;
+        if (oldExtractorId && oldExtractorId !== newExtractorId) {
+          await documentExecutionModel.orphanExtractorHeldDocs(
+            req.params.nodeId,
+            oldExtractorId,
+            currentNode.name
+          );
+        }
+      }
+    }
     const updated = await nodeModel.update(req.params.nodeId, req.body);
     res.json(updated);
   } catch (err) { next(err); }
