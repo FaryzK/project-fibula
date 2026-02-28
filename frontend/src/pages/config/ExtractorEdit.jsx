@@ -47,36 +47,80 @@ function GripHandle(props) {
 }
 
 // ── Sortable wrapper used inside DndContext ───────────────────────────────────
-function SortableFieldRow({ id, field, onChange, onRemove }) {
+function SortableFieldRow({ id, field, onChange, onRemove, showArray = true }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
   return (
     <div ref={setNodeRef} style={style}>
-      <FieldRow field={field} onChange={onChange} onRemove={onRemove} dragHandleProps={{ ...attributes, ...listeners }} />
+      <FieldRow field={field} onChange={onChange} onRemove={onRemove} dragHandleProps={{ ...attributes, ...listeners }} showArray={showArray} />
     </div>
   );
 }
 
+const FIELD_TYPES = [
+  { value: 'string', label: 'String' },
+  { value: 'number', label: 'Number' },
+  { value: 'boolean', label: 'Boolean' },
+  { value: 'date', label: 'Date' },
+  { value: 'currency', label: 'Currency' },
+  { value: 'array', label: 'Array' },
+];
+const ARRAY_ITEM_TYPES = [
+  { value: 'string', label: 'String' },
+  { value: 'number', label: 'Number' },
+  { value: 'date', label: 'Date' },
+  { value: 'currency', label: 'Currency' },
+];
+const SELECT_CLS = 'border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-xs bg-white dark:bg-gray-800 text-gray-900 dark:text-white';
+
 // ── Field row (edit mode) ────────────────────────────────────────────────────
-function FieldRow({ field, onChange, onRemove, dragHandleProps }) {
+function FieldRow({ field, onChange, onRemove, dragHandleProps, showArray = true }) {
+  const currentType = field.data_type || 'string';
+  const types = showArray ? FIELD_TYPES : FIELD_TYPES.filter((t) => t.value !== 'array');
   return (
-    <div className="flex items-center gap-2 bg-gray-50 dark:bg-gray-700 rounded-lg p-3">
-      {dragHandleProps && <GripHandle {...dragHandleProps} />}
-      <div className="flex-1 grid grid-cols-2 gap-2">
-        <input
-          value={field.field_name}
-          onChange={(e) => onChange({ ...field, field_name: e.target.value })}
-          placeholder="Field name"
-          className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-xs bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
-        />
-        <input
-          value={field.field_description}
-          onChange={(e) => onChange({ ...field, field_description: e.target.value })}
-          placeholder="Description"
-          className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-xs bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
-        />
+    <div className="flex items-start gap-2 bg-gray-50 dark:bg-gray-700 rounded-lg p-3">
+      {dragHandleProps && <div className="mt-1"><GripHandle {...dragHandleProps} /></div>}
+      <div className="flex-1 space-y-1.5">
+        <div className="grid grid-cols-2 gap-2">
+          <input
+            value={field.field_name}
+            onChange={(e) => onChange({ ...field, field_name: e.target.value })}
+            placeholder="Field name"
+            className={SELECT_CLS}
+          />
+          <input
+            value={field.field_description}
+            onChange={(e) => onChange({ ...field, field_description: e.target.value })}
+            placeholder="Description"
+            className={SELECT_CLS}
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <select
+            value={currentType}
+            onChange={(e) => {
+              const t = e.target.value;
+              onChange({ ...field, data_type: t, array_item_type: t === 'array' ? (field.array_item_type || 'string') : null });
+            }}
+            className={SELECT_CLS}
+          >
+            {types.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+          {currentType === 'array' && (
+            <>
+              <span className="text-xs text-gray-400 dark:text-gray-500">of</span>
+              <select
+                value={field.array_item_type || 'string'}
+                onChange={(e) => onChange({ ...field, array_item_type: e.target.value })}
+                className={SELECT_CLS}
+              >
+                {ARRAY_ITEM_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </>
+          )}
+        </div>
       </div>
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex items-center gap-2 shrink-0 mt-1">
         <button
           type="button"
           role="switch"
@@ -88,7 +132,7 @@ function FieldRow({ field, onChange, onRemove, dragHandleProps }) {
         </button>
         <span className="text-xs text-gray-500 dark:text-gray-400">Required</span>
       </div>
-      <button onClick={onRemove} className="text-red-400 hover:text-red-600 text-lg leading-none ml-1">×</button>
+      <button onClick={onRemove} className="text-red-400 hover:text-red-600 text-lg leading-none ml-1 mt-1">×</button>
     </div>
   );
 }
@@ -96,7 +140,7 @@ function FieldRow({ field, onChange, onRemove, dragHandleProps }) {
 // ── Table type section (edit mode) ───────────────────────────────────────────
 function TableTypeSection({ tt, onChange, onRemove, sensors }) {
   function addColumn() {
-    onChange({ ...tt, columns: [...(tt.columns || []), { column_name: '', column_description: '', is_mandatory: false, _dndId: `col-${Date.now()}` }] });
+    onChange({ ...tt, columns: [...(tt.columns || []), { column_name: '', column_description: '', is_mandatory: false, data_type: 'string', _dndId: `col-${Date.now()}` }] });
   }
   function updateCol(idx, col) {
     const cols = [...(tt.columns || [])];
@@ -142,15 +186,17 @@ function TableTypeSection({ tt, onChange, onRemove, sensors }) {
                 <SortableFieldRow
                   key={col._dndId}
                   id={col._dndId}
-                  field={{ field_name: col.column_name, field_description: col.column_description, is_mandatory: col.is_mandatory, _dndId: col._dndId }}
-                  onChange={(upd) => updateCol(i, { column_name: upd.field_name, column_description: upd.field_description, is_mandatory: upd.is_mandatory, _dndId: col._dndId })}
+                  showArray={false}
+                  field={{ field_name: col.column_name, field_description: col.column_description, is_mandatory: col.is_mandatory, data_type: col.data_type || 'string', _dndId: col._dndId }}
+                  onChange={(upd) => updateCol(i, { column_name: upd.field_name, column_description: upd.field_description, is_mandatory: upd.is_mandatory, data_type: upd.data_type || 'string', _dndId: col._dndId })}
                   onRemove={() => removeCol(i)}
                 />
               ) : (
                 <FieldRow
                   key={i}
-                  field={{ field_name: col.column_name, field_description: col.column_description, is_mandatory: col.is_mandatory }}
-                  onChange={(upd) => updateCol(i, { column_name: upd.field_name, column_description: upd.field_description, is_mandatory: upd.is_mandatory })}
+                  showArray={false}
+                  field={{ field_name: col.column_name, field_description: col.column_description, is_mandatory: col.is_mandatory, data_type: col.data_type || 'string' }}
+                  onChange={(upd) => updateCol(i, { column_name: upd.field_name, column_description: upd.field_description, is_mandatory: upd.is_mandatory, data_type: upd.data_type || 'string' })}
                   onRemove={() => removeCol(i)}
                 />
               )
@@ -516,7 +562,7 @@ function ExtractorEdit() {
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Header Fields</h2>
                 {editingSchema && (
-                  <button type="button" onClick={() => setHeaderFields((prev) => [...prev, { field_name: '', field_description: '', is_mandatory: false, _dndId: `f-new-${Date.now()}` }])} className="text-xs text-indigo-600 hover:underline">
+                  <button type="button" onClick={() => setHeaderFields((prev) => [...prev, { field_name: '', field_description: '', is_mandatory: false, data_type: 'string', _dndId: `f-new-${Date.now()}` }])} className="text-xs text-indigo-600 hover:underline">
                     + Add field
                   </button>
                 )}
@@ -557,6 +603,9 @@ function ExtractorEdit() {
                       <div key={i} className="flex items-center gap-3 text-sm py-1.5 border-b border-gray-100 dark:border-gray-700 last:border-0">
                         <span className="font-medium text-gray-800 dark:text-gray-200 w-40 shrink-0">{f.field_name}</span>
                         <span className="text-gray-500 dark:text-gray-400 flex-1 text-xs">{f.field_description}</span>
+                        <span className="text-xs px-1.5 py-0.5 bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 rounded font-mono shrink-0">
+                          {f.data_type === 'array' ? `array<${f.array_item_type || 'string'}>` : (f.data_type || 'string')}
+                        </span>
                         {f.is_mandatory && (
                           <span className="text-xs px-1.5 py-0.5 bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400 rounded">Required</span>
                         )}
@@ -608,6 +657,9 @@ function ExtractorEdit() {
                               <div key={j} className="flex items-center gap-3 text-xs py-1">
                                 <span className="font-medium text-gray-700 dark:text-gray-300 w-32 shrink-0">{col.column_name}</span>
                                 <span className="text-gray-500 dark:text-gray-400 flex-1">{col.column_description}</span>
+                                <span className="px-1.5 py-0.5 bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 rounded font-mono shrink-0">
+                                  {col.data_type || 'string'}
+                                </span>
                                 {col.is_mandatory && (
                                   <span className="px-1.5 py-0.5 bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400 rounded">Required</span>
                                 )}

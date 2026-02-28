@@ -1,0 +1,118 @@
+DATA TYPES
+
+This document defines the data type system used across Extractor, Data Mapper, and Reconciliation. Any feature that declares, transforms, or compares field values references this specification.
+
+
+---
+
+OVERVIEW
+
+Every extractor field (header field or table column) has a declared data type. The type serves three purposes:
+1. Instructs the VLM what format to return the value in during extraction
+2. Tells the backend how to coerce and store the extracted value
+3. Enables downstream nodes (Data Mapper, Reconciliation) to apply type-aware operations (lookups, comparisons, transformations)
+
+If no type is declared, the default is string.
+
+
+---
+
+SUPPORTED TYPES
+
+| Type     | Stored as                     | Example stored value  |
+|----------|-------------------------------|-----------------------|
+| string   | string                        | "INV-2024-001"        |
+| number   | JS number (float)             | 1234.56               |
+| boolean  | boolean                       | true                  |
+| date     | ISO 8601 string (YYYY-MM-DD)  | "2024-01-15"          |
+| currency | ISO 4217 currency code string | "SGD"                 |
+| array    | JSON array of typed elements  | ["ref-1", "ref-2"]    |
+
+Array sub-types (chosen when type = array): string, number, date, currency.
+Each element in an array follows the same coercion rules as the corresponding scalar type.
+
+Array type is only available on header fields. Table columns always hold a single scalar value per cell.
+
+
+---
+
+VLM EXTRACTION INSTRUCTIONS (per type)
+
+When the extractor prompts the VLM, each field's type is communicated explicitly:
+
+- string   — "extract as plain text"
+- number   — "extract as a numeric value only; no currency symbols, commas, or units"
+- boolean  — "extract as true or false"
+- date     — "extract and normalise to ISO 8601 format: YYYY-MM-DD"
+- currency — "extract the currency code only (ISO 4217 format, e.g. USD, SGD, JPY); do not include the amount"
+- array    — "extract as a JSON array; each element must follow the [sub-type] rules above"
+
+If the VLM cannot find a value for a field, it must return null for that field.
+
+
+---
+
+POST-EXTRACTION COERCION
+
+After the VLM returns extracted values, the backend applies coercion before storing in document metadata. Coercion is applied only to non-null values. If coercion fails (e.g. the VLM returned unparseable text for a number field), the value is stored as null and treated as missing for mandatory checks.
+
+Coercion rules per type:
+
+string
+  - Cast to string as-is. No transformation.
+
+number
+  - Strip currency symbols (£, $, €, etc.), thousands separators (commas, spaces), and surrounding whitespace.
+  - Parse as float (parseFloat).
+  - Example: "$1,234.56" → 1234.56
+
+boolean
+  - Case-insensitive mapping:
+    - true  ← "true", "yes", "y", "1"
+    - false ← "false", "no", "n", "0"
+  - Any other value → null (coercion failure).
+
+date
+  - Accept common formats: DD/MM/YYYY, MM/DD/YYYY, YYYY-MM-DD, written month names (e.g. "15 Jan 2024", "January 15, 2024").
+  - Normalise to YYYY-MM-DD.
+  - If time is present, store as full ISO 8601 datetime (YYYY-MM-DDTHH:mm:ssZ) — but prefer date-only unless time is meaningful.
+  - Ambiguous formats (e.g. 01/02/2024) are resolved using context from the field description.
+
+currency
+  - Accept ISO 4217 codes directly (USD, SGD, JPY).
+  - Map common currency symbols to codes where unambiguous: "$" → "USD", "£" → "GBP", "€" → "EUR", "S$" → "SGD", "¥" → "JPY".
+  - Store as uppercase ISO 4217 code string.
+  - If the code cannot be determined → null.
+
+array
+  - If the VLM returns a non-array, wrap it in a single-element array.
+  - Apply the appropriate scalar coercion to each element.
+  - Elements that fail coercion are stored as null within the array.
+
+
+---
+
+SCOPE BY FEATURE
+
+| Feature         | Uses data types for...                                                    |
+|-----------------|---------------------------------------------------------------------------|
+| Extractor       | Schema definition (UI), VLM prompt instructions, post-extraction coercion |
+| Data Mapper     | Type-aware lookup matching and field value transformation (future)         |
+| Reconciliation  | Type-aware comparison operators (e.g. date range, numeric tolerance)      |
+
+For the initial implementation, data types are scoped to Extractor only (schema definition + generation + storage). Data Mapper and Reconciliation integration is planned but not yet implemented.
+
+
+---
+
+DATABASE
+
+Data type information is stored as columns on the schema tables:
+
+extractor_header_fields:
+  - data_type       text  NOT NULL  DEFAULT 'string'
+  - array_item_type text  NULLABLE  (only set when data_type = 'array')
+
+extractor_table_columns:
+  - data_type       text  NOT NULL  DEFAULT 'string'
+  - array_item_type is not applicable (array type not available on table columns)
