@@ -33,6 +33,7 @@ All feature specs live in `/requirements/`. **Always read the relevant file befo
 | `Service Node - Data Mapper Rule.txt` | Data map sets, data map rules, lookup + calculation logic |
 | `Service Node - Reconciliation.txt` | Reconciliation rules, matching sets, comparison + tolerances |
 | `Service Node - Document Folder.txt` | Document folder instances, hold + send-out behaviour |
+| `Data Types.txt` | Data type system (string, number, boolean, date, currency, array) — used by Extractor, Data Mapper, Reconciliation |
 | `Webhook Node.txt` | Inbound webhook trigger node |
 | `HTTP Node.txt` | Outbound HTTP export node |
 | `Flow Inspector.txt` | Flow Inspector view — per-node document status, held/failed/orphaned docs, re-trigger flow |

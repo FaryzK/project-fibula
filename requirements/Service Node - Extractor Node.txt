@@ -57,10 +57,13 @@ TAB 1: SCHEMA
 
 The schema defines the structure of data to be extracted from documents. It has two parts:
 
+Data types: every header field and table column has a declared data type (string, number, boolean, date, currency, array). The type controls how the VLM is instructed to return the value and how the backend coerces it before storage. See Data Types.txt for the full specification. Array type is only available on header fields; table columns are always scalar.
+
 1. Header Fields
 Header fields are document-wide data points (e.g. Invoice Number, Total Amount, Vendor Name).
 
-- Users add fields one at a time, defining a field name and a field description.
+- Users add fields one at a time, defining a field name, a field description, and a data type (default: string).
+- When type = array, a second selector appears to choose the array item type (string, number, date, or currency).
 - Field description explains to the VLM what the field represents and how to find it.
 - Each field can be toggled as Mandatory. If the VLM cannot find a value for a mandatory field, the document is held (see Held Documents).
 - Fields can be reordered by dragging (drag-to-reorder).
@@ -70,7 +73,7 @@ Tables capture repeating row-level data (e.g. line items).
 
 - Users first define a Table Type by giving it a name and a description.
 - Table types exist because tables in documents can be fragmented across pages. Instead of treating each page's table separately, rows from all fragments of the same type are merged into one unified table. This is important for downstream use in the reconciliation node.
-- Within each table type, users define column headers, each with a name and description.
+- Within each table type, users define column headers, each with a name, description, and data type (default: string; array type not available on table columns).
 - Each table type can be toggled as Mandatory. If the VLM cannot find any rows for a mandatory table, the document is held.
 - Column headers within a table type can be reordered by dragging.
 
