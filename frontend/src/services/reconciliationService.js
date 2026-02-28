@@ -14,8 +14,9 @@ const reconciliationService = {
     api.get(`/reconciliation-rules/${ruleId}/matching-sets/${setId}`).then((r) => r.data),
 
   // New: Held documents pool
-  listHeldDocs: () =>
-    api.get('/reconciliation-rules/documents').then((r) => r.data),
+  // statusFilter: 'held' for only unreconciled docs, omit for all (Data Pool)
+  listHeldDocs: (statusFilter) =>
+    api.get('/reconciliation-rules/documents', { params: statusFilter ? { status: statusFilter } : undefined }).then((r) => r.data),
   rejectDoc: (heldDocId) =>
     api.post(`/reconciliation-rules/documents/${heldDocId}/reject`),
   deleteDoc: (heldDocId) =>

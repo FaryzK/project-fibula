@@ -150,7 +150,7 @@ Documents can participate in multiple rules at the same time. For example, an In
 
 UI STRUCTURE (Reconciliation Tab)
 
-The Reconciliation landing page has two sub-tabs:
+The Reconciliation landing page has three sub-tabs:
 
 1. Anchor Documents
 Filtered by selected rule. Shows each anchor document and its overall status (Open / Fully Reconciled). Clicking an anchor opens its detail page.
@@ -162,12 +162,30 @@ Anchor Detail Page:
 - When all comparisons are Auto or Force, comparison cells are displayed in green. Pending comparisons are highlighted.
 - Adding a document to a matching set: only documents already held in the reconciliation service (arrived via workflow) can be added. Uploading arbitrary files directly is not supported.
 
-2. Documents
-Global list of all held, reconciled, and rejected documents across all rules. Each row shows:
-- Document name and status badge (Held / Reconciled / Rejected)
-- Source: which workflow and which reconciliation node it came from
-- Which input slot (extractor label) it arrived on
+2. Held Documents
+Shows only documents that are currently unreconciled — documents that have arrived via workflow but have not yet been sent out (status = held). Documents that have been sent out (reconciled) or rejected do not appear here.
+
+Each row shows:
+- Document name and status badge (always Held in this tab)
+- Extractor / slot label (which document type this is, e.g. "Purchase Order")
+- Source: which workflow and which reconciliation node it came from (node name shown; if node was deleted, shown as "Deleted node")
 - Matching sets it belongs to: first few shown, remainder truncated with "+N more" (expandable)
+- A delete button to permanently remove the document from reconciliation
+
+Empty state: "No documents currently held in reconciliation."
+
+3. Data Pool
+Global list of all documents the reconciliation service has ever seen, across all statuses (Held, Reconciled, Rejected) and all workflows. Documents remain in the Data Pool even after being sent out — this allows them to be referenced as targets in other matching sets.
+
+Why Data Pool exists alongside Held Documents:
+In many-to-many reconciliation scenarios (e.g. multiple POs matched against multiple Invoices), a PO may be fully reconciled with one Invoice and sent out — but a separate Invoice might still be waiting for that PO's data to complete its own matching set. Blocking the PO's send-out would be wrong, but discarding its data would break the second Invoice's reconciliation. The Data Pool retains a persistent record of every document regardless of send-out status, so it remains available as a target in any matching set. Held Documents is a filtered view of the same pool — only the subset that still needs action (status = held).
+
+Each row shows:
+- Document name and status badge (Held / Reconciled / Rejected)
+- Extractor / slot label
+- Source: which workflow and which reconciliation node it came from
+- Matching sets it belongs to: first few shown, remainder truncated with "+N more" (expandable)
+- A delete button
 
 
 ---

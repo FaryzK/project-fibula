@@ -337,6 +337,31 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
     if (result.type === 'hold') {
       await documentExecutionModel.updateLog(log.id, { status: 'held', outputMetadata: metadata });
       await documentExecutionModel.updateStatus(docExecution.id, { status: 'held', currentNodeId: nodeId });
+
+      // Reconciliation: arriving doc stays held, but anchor docs in now-completed matching sets
+      // need to be released on their own output ports.
+      if (result.setDocExecIds && result.setDocExecIds.length > 0) {
+        for (const item of result.setDocExecIds) {
+          const otherId = typeof item === 'object' ? item.docExecutionId : item;
+          const otherPort = typeof item === 'object' ? item.outputPort : null;
+          const otherExec = await documentExecutionModel.findById(otherId);
+          if (otherExec && otherExec.status === 'held') {
+            const otherMeta = parseMeta(otherExec.metadata);
+            const otherReconLog = await documentExecutionModel.findLog(otherId, nodeId);
+            if (otherReconLog) {
+              await documentExecutionModel.updateLog(otherReconLog.id, {
+                status: 'completed',
+                outputPort: otherPort,
+                outputMetadata: otherMeta,
+              });
+            }
+            const otherEdges = (graph[nodeId] || []).filter((e) => e.sourcePort === otherPort);
+            const startQ = otherEdges.map((e) => ({ nodeId: e.targetNodeId, metadata: otherMeta }));
+            pendingExecQueue.push({ docExecution: otherExec, startQueue: startQ });
+          }
+        }
+      }
+
       return;
     }
 

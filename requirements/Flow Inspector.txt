@@ -17,10 +17,13 @@ Left sidebar — a list of all nodes in the workflow, ordered topologically (fol
 - Live count badges: number of documents currently Processing / Held / Failed at that node
 - Clicking a node row selects it and opens its document panel on the right
 
-Right panel — shows documents at the selected node, across three tabs:
-- Processing
-- Held (only shown for nodes that can hold documents: Extractor, Document Folder, Reconciliation)
-- Failed
+Right panel — shows documents at the selected node. Tabs vary by node type:
+
+For most nodes: Processing · Failed
+For Extractor and Document Folder nodes: Processing · Held · Failed
+For Reconciliation nodes: Held Documents · Failed
+
+(Reconciliation nodes omit the Processing tab — documents transition through processing so briefly it is not meaningful to surface. The "Held" tab is renamed "Held Documents" for Reconciliation nodes to match the terminology used in the Reconciliation service.)
 
 Top of the sidebar — an Orphaned section (always visible regardless of which node is selected). Clicking it opens the Orphaned documents panel in the right area.
 
@@ -44,9 +47,9 @@ Empty state: "No documents currently processing."
 
 ---
 
-HELD TAB
+HELD TAB (Extractor and Document Folder nodes)
 
-Only shown for nodes that can hold documents: Extractor, Document Folder, Reconciliation.
+Only shown for Extractor and Document Folder nodes.
 
 Shows documents currently held at this node (status = held, current_node_id = this node).
 
@@ -61,6 +64,24 @@ Documents appear at the bottom of the list as they become held. Documents disapp
 The list updates via polling every 2 seconds.
 
 Empty state: "No documents held."
+
+
+---
+
+HELD DOCUMENTS TAB (Reconciliation nodes only)
+
+Shown only for Reconciliation nodes, replacing the Processing and Held tabs.
+
+Shows documents currently held at this reconciliation node (status = held, current_node_id = this node). These are documents that have arrived at the recon node and are waiting to be matched and reconciled. The brief processing state that occurs when a document first arrives is not surfaced — from the user's perspective, all documents in a recon node are in a held state.
+
+Each row shows:
+- File name
+- Time held since
+- A Delete button to permanently remove the document execution
+
+The list updates via polling every 2 seconds.
+
+Empty state: "No documents currently held."
 
 
 ---
