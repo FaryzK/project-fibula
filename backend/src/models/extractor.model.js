@@ -47,6 +47,8 @@ module.exports = {
               field_name: f.field_name,
               field_description: f.field_description || '',
               is_mandatory: f.is_mandatory || false,
+              data_type: f.data_type || 'string',
+              array_item_type: f.array_item_type || null,
               sort_order: i,
             }))
           )
@@ -70,6 +72,7 @@ module.exports = {
                 column_name: c.column_name,
                 column_description: c.column_description || '',
                 is_mandatory: c.is_mandatory || false,
+                data_type: c.data_type || 'string',
                 sort_order: i,
               }))
             )
@@ -104,6 +107,8 @@ module.exports = {
             field_name: f.field_name,
             field_description: f.field_description || '',
             is_mandatory: f.is_mandatory || false,
+            data_type: f.data_type || 'string',
+            array_item_type: f.array_item_type || null,
             sort_order: i,
           }))
         );
@@ -128,6 +133,7 @@ module.exports = {
               column_name: c.column_name,
               column_description: c.column_description || '',
               is_mandatory: c.is_mandatory || false,
+              data_type: c.data_type || 'string',
               sort_order: i,
             }))
           );
