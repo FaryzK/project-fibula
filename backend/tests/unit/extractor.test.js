@@ -15,8 +15,10 @@ jest.mock('../../src/config/db', () => ({
 
 jest.mock('../../src/models/extractor.model');
 jest.mock('../../src/models/user.model');
+jest.mock('../../src/models/document.model');
 jest.mock('../../src/models/documentExecution.model');
 jest.mock('../../src/models/workflowRun.model');
+jest.mock('../../src/services/storage.service');
 jest.mock('../../src/services/execution.service', () => ({
   resumeDocumentExecution: jest.fn().mockResolvedValue(),
   runWorkflow: jest.fn().mockResolvedValue(),
@@ -29,7 +31,9 @@ jest.mock('../../src/middleware/dbUser.middleware', () => (req, res, next) => {
 const { supabase } = require('../../src/config/db');
 const extractorModel = require('../../src/models/extractor.model');
 const userModel = require('../../src/models/user.model');
+const documentModel = require('../../src/models/document.model');
 const documentExecutionModel = require('../../src/models/documentExecution.model');
+const storageService = require('../../src/services/storage.service');
 
 const FAKE_USER = { id: 'supabase-uid-1' };
 const FAKE_DB_USER = { id: 'db-uuid-1' };
@@ -81,6 +85,9 @@ beforeEach(() => {
   supabase.auth.getUser.mockResolvedValue({ data: { user: FAKE_USER }, error: null });
   userModel.findBySupabaseId.mockResolvedValue(FAKE_DB_USER);
   documentExecutionModel.findById.mockResolvedValue(null);
+  extractorModel.findTrainingDocuments.mockResolvedValue([]);
+  storageService.remove.mockResolvedValue();
+  documentModel.remove.mockResolvedValue();
 });
 
 describe('Extractor routes', () => {
@@ -169,6 +176,19 @@ describe('Extractor routes', () => {
       extractorModel.findUsage.mockResolvedValue([{ workflow_id: 'wf-1', node_id: 'n-1' }]);
       const res = await request(app).delete('/api/extractors/ext-1').set(authHeaders());
       expect(res.statusCode).toBe(409);
+    });
+
+    it('cleans up training documents from storage before deleting', async () => {
+      extractorModel.findById.mockResolvedValue(FAKE_EXTRACTOR);
+      extractorModel.findUsage.mockResolvedValue([]);
+      extractorModel.findTrainingDocuments.mockResolvedValue([
+        { id: 'doc-1', file_url: 'https://example.supabase.co/storage/v1/object/public/documents/abc.pdf' },
+      ]);
+      extractorModel.remove.mockResolvedValue();
+      const res = await request(app).delete('/api/extractors/ext-1').set(authHeaders());
+      expect(res.statusCode).toBe(204);
+      expect(storageService.remove).toHaveBeenCalledWith('abc.pdf');
+      expect(documentModel.remove).toHaveBeenCalledWith('doc-1');
     });
   });
 

@@ -109,6 +109,10 @@ NODE DELETION WARNING
 
 When a user attempts to delete a node that has held documents, a warning modal appears before deletion proceeds.
 
+The warning is triggered in two ways:
+- Pressing Delete / Backspace on a selected node on the canvas
+- Clicking the "Delete node" button in the NodePanel sidebar
+
 The modal shows:
 - How many documents are currently held at this node
 - A note that processing documents will be allowed to complete naturally; if they later reach the deleted node they will fail and appear in the Failed tab of the orphaned section
@@ -119,6 +123,31 @@ Actions in the modal:
 - Proceed — delete the node and move all held documents to orphaned status
 
 If the node has no held documents, deletion proceeds immediately without a warning (existing behaviour).
+
+When held documents are orphaned due to node deletion:
+- Their document_executions status is set to 'orphaned' and they appear in the Orphaned panel
+- Their extractor_held_documents records (if any) are deleted so they no longer appear in the extractor's Held tab
+
+
+---
+
+EXTRACTOR NODE RECONFIGURATION WARNING
+
+When a user changes the extractor assigned to an EXTRACTOR node (switching from extractor A to extractor B), the system checks whether the current extractor has any held documents.
+
+If held documents exist, a warning modal appears before the change is saved:
+- Shows how many held documents exist for the current extractor
+- Notes that any documents held at this node will be moved to Orphaned Documents
+
+Actions in the modal:
+- Cancel — dismiss and keep the current extractor; no change is made
+- Proceed — save the new extractor and move any held documents at this node (for the old extractor) to orphaned status
+
+When held documents are orphaned due to extractor reconfiguration:
+- Their document_executions status is set to 'orphaned' and they appear in the Orphaned panel
+- Their extractor_held_documents records are deleted so they no longer appear in the extractor's Held tab
+
+If the current extractor has no held documents, the change saves immediately without a warning.
 
 
 ---
@@ -134,6 +163,8 @@ If the workflow has more than one trigger node, a modal appears for the user to 
 Re-trigger is available from:
 - The Failed tab (per-document Re-trigger button)
 - The Orphaned panel (per-document Re-trigger button, or bulk Re-trigger for selected documents)
+
+When a document is re-triggered from the Orphaned panel, it is immediately removed from the Orphaned panel (its document_execution status is set to 'completed'). The new workflow run creates fresh document_execution records that track the document's new journey through the workflow.
 
 
 ---
