@@ -103,6 +103,17 @@ module.exports = {
       if (usage.length > 0) {
         return res.status(409).json({ error: 'Cannot delete: extractor is used by workflow nodes', usage });
       }
+      // Clean up storage files for training feedback documents before removing the extractor
+      const trainingDocs = await extractorModel.findTrainingDocuments(req.params.id);
+      for (const doc of trainingDocs) {
+        try {
+          const path = doc.file_url.split('/documents/').pop();
+          await storageService.remove(path);
+        } catch (e) {
+          console.error(`Storage cleanup failed for training doc ${doc.id}:`, e.message);
+        }
+        await documentModel.remove(doc.id);
+      }
       await extractorModel.remove(req.params.id);
       return res.status(204).send();
     } catch (err) {

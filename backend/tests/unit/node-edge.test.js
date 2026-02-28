@@ -45,6 +45,7 @@ beforeEach(() => {
   workflowModel.findById.mockResolvedValue(FAKE_WORKFLOW);
   documentExecutionModel.countHeldAtNode.mockResolvedValue(0);
   documentExecutionModel.orphanHeldDocs.mockResolvedValue();
+  documentExecutionModel.orphanExtractorHeldDocs.mockResolvedValue(0);
 });
 
 describe('Node routes', () => {
@@ -82,6 +83,7 @@ describe('Node routes', () => {
 
   describe('PATCH /api/workflows/:id/nodes/:nodeId', () => {
     it('updates a node position and name', async () => {
+      nodeModel.findById.mockResolvedValue({ id: 'n-1', node_type: 'IF', name: 'Branch', config: {} });
       nodeModel.update.mockResolvedValue({ id: 'n-1', position_x: 200, position_y: 100, name: 'Renamed' });
       const res = await request(app)
         .patch('/api/workflows/wf-1/nodes/n-1')
@@ -89,6 +91,42 @@ describe('Node routes', () => {
         .send({ position_x: 200, position_y: 100, name: 'Renamed' });
       expect(res.statusCode).toBe(200);
       expect(res.body.position_x).toBe(200);
+    });
+
+    it('orphans held docs when extractor is reconfigured to a different extractor', async () => {
+      nodeModel.findById.mockResolvedValue({
+        id: 'n-1',
+        node_type: 'EXTRACTOR',
+        name: 'Invoice Extractor',
+        config: { extractor_id: 'ext-old' },
+      });
+      nodeModel.update.mockResolvedValue({ id: 'n-1', config: { extractor_id: 'ext-new' } });
+      const res = await request(app)
+        .patch('/api/workflows/wf-1/nodes/n-1')
+        .set(authHeaders())
+        .send({ config: { extractor_id: 'ext-new' } });
+      expect(res.statusCode).toBe(200);
+      expect(documentExecutionModel.orphanExtractorHeldDocs).toHaveBeenCalledWith(
+        'n-1',
+        'ext-old',
+        'Invoice Extractor'
+      );
+    });
+
+    it('does not orphan held docs when extractor_id is unchanged', async () => {
+      nodeModel.findById.mockResolvedValue({
+        id: 'n-1',
+        node_type: 'EXTRACTOR',
+        name: 'Invoice Extractor',
+        config: { extractor_id: 'ext-same' },
+      });
+      nodeModel.update.mockResolvedValue({ id: 'n-1', config: { extractor_id: 'ext-same' } });
+      const res = await request(app)
+        .patch('/api/workflows/wf-1/nodes/n-1')
+        .set(authHeaders())
+        .send({ config: { extractor_id: 'ext-same' } });
+      expect(res.statusCode).toBe(200);
+      expect(documentExecutionModel.orphanExtractorHeldDocs).not.toHaveBeenCalled();
     });
   });
 

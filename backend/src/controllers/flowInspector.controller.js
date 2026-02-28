@@ -132,6 +132,9 @@ async function retrigger(req, res, next) {
     const run = await workflowRunModel.create({ workflowId, triggeredBy: 'RETRIGGER' });
     await documentExecutionModel.createMany(run.id, entries);
 
+    // Remove source executions from the Orphaned panel now that they have been re-triggered
+    await documentExecutionModel.markRetriggered(execIds);
+
     executionService.runWorkflow(run.id).catch((err) => {
       console.error(`retrigger runWorkflow failed for run ${run.id}:`, err);
     });
