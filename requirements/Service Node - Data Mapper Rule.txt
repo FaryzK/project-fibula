@@ -118,26 +118,28 @@ Table column schema fields are referenced as "TableType.ColumnName" (e.g. "Invoi
 
 2. Map Targets
 Defines which schema fields to populate from the matched record. Each target has:
-- Schema field: which field to write to (header field or table column)
-- Expression: what value to write — built using clickable chips
+- Target field: which schema field to write to (header field or table column)
+- Value: a token-based expression defining what value to write
 
-The expression can be:
-- A set column name (simple map): e.g. `to_uom` — directly copies the matched record's column value
-- A formula using `schema` and set columns: e.g. `schema * conversion` — evaluates the expression
-
-The `schema` keyword refers to the current value of the target schema field in the document. Bare names refer to columns from the matched data map set record.
+The expression is a sequence of typed tokens. Each token is one of:
+- Set column (amber chip): a column from the data map set — resolved from the matched record
+- Extractor field (indigo chip): a field from the extractor schema — resolved from the document's extracted metadata
+- Operator (gray chip): arithmetic operator (+, -, *, /, (, ))
+- Literal (green chip): a user-entered constant value (number or text)
 
 Expression Builder UI
-The expression is built using clickable chips:
-- Set column chips (amber): one for each column in the rule's data map set, ALL data types shown. Clicking inserts the column name.
-- Schema variable chip (indigo): shows `schema (FieldName)` where FieldName is the selected target schema field. Clicking inserts `schema`.
-- Operator buttons: +, -, *, /, (, )
-- The expression textarea is also directly editable.
+The value is displayed as a row of colored chips. Users build expressions by clicking chip buttons:
+- Set column chips (amber): one for each column in the rule's data map set. Clicking appends a set token.
+- Extractor field chips (indigo): all header fields and table columns from the extractor schema. Clicking appends an extractor token.
+- Operator buttons: +, -, *, /, (, ). Clicking appends an operator token.
+- Literal input: a text field with an "Add" button for entering constant values.
+Each token in the expression has a small × button to remove it.
 
 Examples:
-- `VendorCode` — simple map: copy VendorCode from matched record
-- `schema * conversion` — multiply the current field value by the matched conversion factor
-- `schema / conversion` — divide by the matched factor
+- [set: VendorCode] — simple map: copy VendorCode from matched record
+- [ext: Invoice Table.Qty] [*] [set: conversion] — multiply the extracted quantity by the matched conversion factor
+- [ext: Invoice Table.Unit Price] [/] [set: conversion] — divide the extracted unit price by the conversion factor
+- [ext: Invoice Table.Quantity] [*] [lit: 2] — multiply quantity by a literal constant
 
 Header vs Table Target Behaviour
 - Header targets (schema field has no dot): the lookup runs once using the document's header field values. The matched record's value is written to the specified header field.
@@ -170,11 +172,11 @@ Lookup Criteria:
   → Per line item, finds the row where from_uom matches the item's UoM.
 
 Map Targets:
-| Schema field              | Expression           | Effect                                      |
-|---------------------------|----------------------|---------------------------------------------|
-| Invoice Table.UoM         | to_uom               | Maps UoM to target unit (BOX → PCS)         |
-| Invoice Table.Qty         | schema * conversion   | Multiplies quantity by conversion factor     |
-| Invoice Table.Unit Price  | schema / conversion   | Divides unit price by conversion factor      |
+| Target field              | Value expression                                        | Effect                                      |
+|---------------------------|---------------------------------------------------------|---------------------------------------------|
+| Invoice Table.UoM         | [set: to_uom]                                           | Maps UoM to target unit (BOX → PCS)         |
+| Invoice Table.Qty         | [ext: Invoice Table.Qty] * [set: conversion]            | Multiplies quantity by conversion factor     |
+| Invoice Table.Unit Price  | [ext: Invoice Table.Unit Price] / [set: conversion]     | Divides unit price by conversion factor      |
 
 How it works in the flow:
 1. Document passes through the Extractor node → extracts line items

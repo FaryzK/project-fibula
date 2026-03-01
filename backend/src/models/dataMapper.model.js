@@ -211,7 +211,7 @@ module.exports = {
             targets.map((t) => ({
               rule_id: rule.id,
               schema_field: t.schema_field,
-              expression: t.expression || null,
+              expression: t.expression ? JSON.stringify(t.expression) : null,
             }))
           )
           .returning('*')
@@ -255,7 +255,7 @@ module.exports = {
           fields.targets.map((t) => ({
             rule_id: id,
             schema_field: t.schema_field,
-            expression: t.expression || null,
+            expression: t.expression ? JSON.stringify(t.expression) : null,
           }))
         );
       }

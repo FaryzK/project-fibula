@@ -37,22 +37,62 @@ function getField(metadata, fieldPath) {
 }
 
 /**
- * Evaluate a target expression.
- * - Simple column reference (e.g. "VendorCode") → direct lookup in matched record
- * - Formula (e.g. "schema * conversion") → VM evaluation with schema + all set columns
- *
- * `schema` keyword = current value of the target's schema field in the document.
- * Bare names = columns from the matched data map set record.
+ * Parse a literal token value — return as number if numeric, else as string.
  */
-function evalTarget(expression, schemaVal, matchedRecord) {
-  const trimmed = (expression || '').trim();
-  if (!trimmed) return undefined;
-  // Direct column reference (handles names with spaces too)
-  if (trimmed in matchedRecord) return matchedRecord[trimmed];
-  // Expression evaluation
+function parseLiteral(value) {
+  const num = Number(value);
+  return isNaN(num) ? value : num;
+}
+
+/**
+ * Evaluate a target expression (token array).
+ *
+ * Token types:
+ *   - { type: 'set', value: 'colName' }       → value from matched data map set record
+ *   - { type: 'extractor', value: 'fieldPath'} → value from document metadata via schemaResolver
+ *   - { type: 'operator', value: '+' }         → arithmetic operator
+ *   - { type: 'literal', value: '2' }          → literal value
+ *
+ * @param {Array|null} tokens - token array from the expression column (jsonb)
+ * @param {Object} matchedRecord - the matched data map set record (all column values)
+ * @param {Function} schemaResolver - resolves extractor field paths to document values
+ */
+function evalTarget(tokens, matchedRecord, schemaResolver) {
+  if (!tokens || !Array.isArray(tokens) || tokens.length === 0) return undefined;
+
+  // Single value token — return directly (no VM needed)
+  if (tokens.length === 1) {
+    const t = tokens[0];
+    if (t.type === 'set') return matchedRecord[t.value];
+    if (t.type === 'extractor') return schemaResolver(t.value);
+    if (t.type === 'literal') return parseLiteral(t.value);
+    return undefined;
+  }
+
+  // Multi-token — assign safe aliases and evaluate in VM
   try {
-    const context = vm.createContext({ schema: schemaVal, ...matchedRecord, Math });
-    return vm.runInContext(trimmed, context, { timeout: 100 });
+    const context = { Math };
+    let expr = '';
+    let idx = 0;
+
+    for (const t of tokens) {
+      if (t.type === 'operator') {
+        expr += ` ${t.value} `;
+        continue;
+      }
+      const alias = `__v${idx++}__`;
+      if (t.type === 'set') {
+        context[alias] = matchedRecord[t.value];
+      } else if (t.type === 'extractor') {
+        context[alias] = schemaResolver(t.value);
+      } else if (t.type === 'literal') {
+        context[alias] = parseLiteral(t.value);
+      }
+      expr += alias;
+    }
+
+    const sandbox = vm.createContext(context);
+    return vm.runInContext(expr, sandbox, { timeout: 100 });
   } catch (_) {
     return undefined;
   }
@@ -131,7 +171,7 @@ async function applyRule(rule, metadata) {
       const bestRecord = candidates[0].record;
       for (const target of headerTargets) {
         const field = target.schema_field;
-        const value = evalTarget(target.expression, resolveField(field), bestRecord);
+        const value = evalTarget(target.expression, bestRecord, resolveField);
         if (field in enrichedHeader) {
           enrichedHeader[field] = value;
         } else {
@@ -179,7 +219,7 @@ async function applyRule(rule, metadata) {
         const bestRecord = candidates[0].record;
         const newRow = { ...row };
         for (const tg of tgts) {
-          newRow[tg._colName] = evalTarget(tg.expression, row[tg._colName], bestRecord);
+          newRow[tg._colName] = evalTarget(tg.expression, bestRecord, resolveRowField);
         }
         newRows.push(newRow);
       }

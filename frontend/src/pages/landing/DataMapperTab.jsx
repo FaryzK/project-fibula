@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import useDataMapperStore from '../../stores/useDataMapperStore';
 import dataMapperService from '../../services/dataMapperService';
 
@@ -10,7 +10,9 @@ function formatDate(ts) {
 }
 
 function DataMapperTab() {
-  const [view, setView] = useState('sets'); // 'sets' | 'rules'
+  const [searchParams] = useSearchParams();
+  const initialView = searchParams.get('subtab') === 'rules' ? 'rules' : 'sets';
+  const [view, setView] = useState(initialView); // 'sets' | 'rules'
   const { sets, rules, loading, loadSets, loadRules, removeSet, removeRule } = useDataMapperStore();
   const navigate = useNavigate();
 

@@ -25,6 +25,9 @@ function makeTableLookup(schemaField, mapSetColumn, matchType = 'exact') {
   return { map_set_column: mapSetColumn, schema_field: schemaField, match_type: matchType, match_threshold: 0.8, sort_order: 0 };
 }
 
+// Token helper — shorthand for building token arrays
+function tok(type, value) { return { type, value }; }
+
 function makeTableTarget(schemaField, expression) {
   return { schema_field: schemaField, expression };
 }
@@ -42,10 +45,10 @@ function makeSetRecords(records) {
 describe('applyRule — table-level enrichment', () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it('populates SKUCode on all matching rows', async () => {
+  it('populates SKUCode on all matching rows (simple set column)', async () => {
     const rule = makeRule({
       lookups: [makeTableLookup('Invoice Items.Description', 'Description')],
-      targets: [makeTableTarget('Invoice Items.SKUCode', 'SKUCode')],
+      targets: [makeTableTarget('Invoice Items.SKUCode', [tok('set', 'SKUCode')])],
     });
     dataMapperModel.findSetRecords.mockResolvedValue(makeSetRecords([
       { Description: 'Widget A', SKUCode: 'WGT-001' },
@@ -70,7 +73,7 @@ describe('applyRule — table-level enrichment', () => {
   it('leaves unmatched rows unchanged', async () => {
     const rule = makeRule({
       lookups: [makeTableLookup('Invoice Items.Description', 'Description')],
-      targets: [makeTableTarget('Invoice Items.SKUCode', 'SKUCode')],
+      targets: [makeTableTarget('Invoice Items.SKUCode', [tok('set', 'SKUCode')])],
     });
     dataMapperModel.findSetRecords.mockResolvedValue(makeSetRecords([
       { Description: 'Widget A', SKUCode: 'WGT-001' },
@@ -91,35 +94,14 @@ describe('applyRule — table-level enrichment', () => {
     expect(result.tables['Invoice Items'][1].SKUCode).toBeNull(); // unchanged
   });
 
-  it('applies expression per row (schema * Conversion)', async () => {
+  it('evaluates extractor * set expression per row', async () => {
     const rule = makeRule({
       lookups: [makeTableLookup('Invoice Items.UoM', 'UoM_initial')],
-      targets: [makeTableTarget('Invoice Items.TotalUnits', 'schema * Conversion')],
-    });
-    dataMapperModel.findSetRecords.mockResolvedValue(makeSetRecords([
-      { UoM_initial: 'dozen', Conversion: 12 },
-    ]));
-
-    const metadata = {
-      header: {},
-      tables: {
-        'Invoice Items': [
-          { UoM: 'dozen', Quantity: 5, TotalUnits: null },
-          { UoM: 'dozen', Quantity: 3, TotalUnits: null },
-        ],
-      },
-    };
-
-    const result = await applyRule(rule, metadata);
-    // TotalUnits = null, schema * Conversion = null * 12 = 0
-    // schema refers to the target field's current value (TotalUnits = null)
-    expect(result.tables['Invoice Items']).toBeDefined();
-  });
-
-  it('expression uses row column value as schema (Quantity * Conversion)', async () => {
-    const rule = makeRule({
-      lookups: [makeTableLookup('Invoice Items.UoM', 'UoM_initial')],
-      targets: [makeTableTarget('Invoice Items.Quantity', 'schema * Conversion')],
+      targets: [makeTableTarget('Invoice Items.Quantity', [
+        tok('extractor', 'Invoice Items.Quantity'),
+        tok('operator', '*'),
+        tok('set', 'Conversion'),
+      ])],
     });
     dataMapperModel.findSetRecords.mockResolvedValue(makeSetRecords([
       { UoM_initial: 'dozen', Conversion: 12 },
@@ -136,21 +118,17 @@ describe('applyRule — table-level enrichment', () => {
     };
 
     const result = await applyRule(rule, metadata);
-    // schema = row.Quantity, Conversion = 12 from matched record
-    // result = 5 * 12 = 60 for first row, 3 * 12 = 36 for second
     expect(result.tables['Invoice Items'][0].Quantity).toBe(60);
     expect(result.tables['Invoice Items'][1].Quantity).toBe(36);
   });
 
   it('enriches both header target and table target in same rule', async () => {
-    // Use a header-field lookup so both header block and table block can evaluate it.
-    // The table block also falls back to header fields via resolveRowField.
     const headerLookup = { map_set_column: 'VendorName', schema_field: 'VendorName', match_type: 'exact', match_threshold: 0.8, sort_order: 0 };
     const rule = makeRule({
       lookups: [headerLookup],
       targets: [
-        makeHeaderTarget('VendorCode', 'VendorCode'),
-        makeTableTarget('Invoice Items.SKUCode', 'SKUCode'),
+        makeHeaderTarget('VendorCode', [tok('set', 'VendorCode')]),
+        makeTableTarget('Invoice Items.SKUCode', [tok('set', 'SKUCode')]),
       ],
     });
     dataMapperModel.findSetRecords.mockResolvedValue(makeSetRecords([
@@ -174,7 +152,7 @@ describe('applyRule — table-level enrichment', () => {
   it('uses row column value for lookup, not header field of same name', async () => {
     const rule = makeRule({
       lookups: [makeTableLookup('Invoice Items.Description', 'Description')],
-      targets: [makeTableTarget('Invoice Items.SKUCode', 'SKUCode')],
+      targets: [makeTableTarget('Invoice Items.SKUCode', [tok('set', 'SKUCode')])],
     });
     dataMapperModel.findSetRecords.mockResolvedValue(makeSetRecords([
       { Description: 'Row Value', SKUCode: 'CORRECT' },
@@ -191,7 +169,133 @@ describe('applyRule — table-level enrichment', () => {
     };
 
     const result = await applyRule(rule, metadata);
-    // Row's Description ('Row Value') should match, not header's Description ('Header Value')
     expect(result.tables['Invoice Items'][0].SKUCode).toBe('CORRECT');
+  });
+
+  it('handles set columns with spaces in token expressions', async () => {
+    const rule = makeRule({
+      lookups: [makeTableLookup('Invoice Items.UoM', 'from uom')],
+      targets: [makeTableTarget('Invoice Items.Quantity', [
+        tok('extractor', 'Invoice Items.Quantity'),
+        tok('operator', '*'),
+        tok('set', 'conv factor'),
+      ])],
+    });
+    dataMapperModel.findSetRecords.mockResolvedValue(makeSetRecords([
+      { 'from uom': 'BOX', 'to uom': 'PCS', 'conv factor': 10 },
+    ]));
+
+    const metadata = {
+      header: {},
+      tables: {
+        'Invoice Items': [
+          { UoM: 'BOX', Quantity: 3 },
+        ],
+      },
+    };
+
+    const result = await applyRule(rule, metadata);
+    expect(result.tables['Invoice Items'][0].Quantity).toBe(30);
+  });
+
+  it('handles simple set column reference with spaces', async () => {
+    const rule = makeRule({
+      lookups: [makeTableLookup('Invoice Items.UoM', 'from uom')],
+      targets: [makeTableTarget('Invoice Items.UoM', [tok('set', 'to uom')])],
+    });
+    dataMapperModel.findSetRecords.mockResolvedValue(makeSetRecords([
+      { 'from uom': 'BOX', 'to uom': 'PCS', 'conv factor': 10 },
+    ]));
+
+    const metadata = {
+      header: {},
+      tables: {
+        'Invoice Items': [
+          { UoM: 'BOX', Quantity: 3 },
+        ],
+      },
+    };
+
+    const result = await applyRule(rule, metadata);
+    expect(result.tables['Invoice Items'][0].UoM).toBe('PCS');
+  });
+
+  it('evaluates literal token in expression', async () => {
+    const rule = makeRule({
+      lookups: [makeTableLookup('Invoice Items.Description', 'Description')],
+      targets: [makeTableTarget('Invoice Items.Quantity', [
+        tok('extractor', 'Invoice Items.Quantity'),
+        tok('operator', '*'),
+        tok('literal', '2'),
+      ])],
+    });
+    dataMapperModel.findSetRecords.mockResolvedValue(makeSetRecords([
+      { Description: 'Widget A' },
+    ]));
+
+    const metadata = {
+      header: {},
+      tables: {
+        'Invoice Items': [
+          { Description: 'Widget A', Quantity: 7 },
+        ],
+      },
+    };
+
+    const result = await applyRule(rule, metadata);
+    expect(result.tables['Invoice Items'][0].Quantity).toBe(14);
+  });
+
+  it('returns undefined for null or empty expression', async () => {
+    const rule = makeRule({
+      lookups: [makeTableLookup('Invoice Items.Description', 'Description')],
+      targets: [
+        makeTableTarget('Invoice Items.SKUCode', null),
+        makeTableTarget('Invoice Items.UoM', []),
+      ],
+    });
+    dataMapperModel.findSetRecords.mockResolvedValue(makeSetRecords([
+      { Description: 'Widget A', SKUCode: 'WGT-001' },
+    ]));
+
+    const metadata = {
+      header: {},
+      tables: {
+        'Invoice Items': [
+          { Description: 'Widget A', SKUCode: 'original', UoM: 'PCS' },
+        ],
+      },
+    };
+
+    const result = await applyRule(rule, metadata);
+    // null and empty array expressions return undefined → written to the row
+    expect(result.tables['Invoice Items'][0].SKUCode).toBeUndefined();
+    expect(result.tables['Invoice Items'][0].UoM).toBeUndefined();
+  });
+
+  it('evaluates extractor / set expression (division)', async () => {
+    const rule = makeRule({
+      lookups: [makeTableLookup('Invoice Items.UoM', 'from_uom')],
+      targets: [makeTableTarget('Invoice Items.UnitPrice', [
+        tok('extractor', 'Invoice Items.UnitPrice'),
+        tok('operator', '/'),
+        tok('set', 'conversion'),
+      ])],
+    });
+    dataMapperModel.findSetRecords.mockResolvedValue(makeSetRecords([
+      { from_uom: 'BOX', to_uom: 'PCS', conversion: 10 },
+    ]));
+
+    const metadata = {
+      header: {},
+      tables: {
+        'Invoice Items': [
+          { UoM: 'BOX', UnitPrice: 50 },
+        ],
+      },
+    };
+
+    const result = await applyRule(rule, metadata);
+    expect(result.tables['Invoice Items'][0].UnitPrice).toBe(5);
   });
 });

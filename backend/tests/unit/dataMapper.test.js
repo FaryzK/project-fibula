@@ -56,7 +56,7 @@ const FAKE_RULE = {
     { id: 'lk-1', rule_id: 'rule-1', map_set_column: 'VendorName', schema_field: 'vendor_name', match_type: 'fuzzy', match_threshold: 0.8, sort_order: 0 },
   ],
   targets: [
-    { id: 'tg-1', rule_id: 'rule-1', schema_field: 'vendor_code', expression: 'VendorCode' },
+    { id: 'tg-1', rule_id: 'rule-1', schema_field: 'vendor_code', expression: [{ type: 'set', value: 'VendorCode' }] },
   ],
   updated_at: '2026-03-01T00:00:00.000Z',
   updated_by: 'db-uuid-1',
@@ -329,6 +329,7 @@ describe('Data Map Set routes', () => {
   describe('DELETE /api/data-map-sets/:id/records/:recordId', () => {
     it('deletes a record', async () => {
       dataMapperModel.findSetById.mockResolvedValue(FAKE_SET);
+      dataMapperModel.findRecordById.mockResolvedValue({ id: 'rec-1', data_map_set_id: 'set-1', values: {} });
       dataMapperModel.removeRecord.mockResolvedValue();
       const res = await request(app)
         .delete('/api/data-map-sets/set-1/records/rec-1')
@@ -340,7 +341,7 @@ describe('Data Map Set routes', () => {
   describe('PATCH /api/data-map-sets/:id/records/:recordId', () => {
     it('updates a record with valid values', async () => {
       dataMapperModel.findSetById.mockResolvedValue(FAKE_SET);
-      dataMapperModel.findRecordById.mockResolvedValue({ id: 'rec-1', values: { VendorName: 'Acme Corp', VendorCode: 'V001' } });
+      dataMapperModel.findRecordById.mockResolvedValue({ id: 'rec-1', data_map_set_id: 'set-1', values: { VendorName: 'Acme Corp', VendorCode: 'V001' } });
       dataMapperModel.updateRecord.mockResolvedValue({
         id: 'rec-1',
         values: { VendorName: 'Updated', VendorCode: 'V999' },
@@ -355,7 +356,7 @@ describe('Data Map Set routes', () => {
 
     it('merges partial update with existing values', async () => {
       dataMapperModel.findSetById.mockResolvedValue(FAKE_SET);
-      dataMapperModel.findRecordById.mockResolvedValue({ id: 'rec-1', values: { VendorName: 'Acme Corp', VendorCode: 'V001' } });
+      dataMapperModel.findRecordById.mockResolvedValue({ id: 'rec-1', data_map_set_id: 'set-1', values: { VendorName: 'Acme Corp', VendorCode: 'V001' } });
       dataMapperModel.updateRecord.mockImplementation((id, vals) => Promise.resolve({ id, values: vals }));
       const res = await request(app)
         .patch('/api/data-map-sets/set-1/records/rec-1')
@@ -417,6 +418,7 @@ describe('Data Map Rule routes', () => {
 
   describe('POST /api/data-map-rules', () => {
     it('creates a rule', async () => {
+      dataMapperModel.findSetById.mockResolvedValue(FAKE_SET);
       dataMapperModel.createRule.mockResolvedValue(FAKE_RULE);
       const res = await request(app)
         .post('/api/data-map-rules')
@@ -432,6 +434,48 @@ describe('Data Map Rule routes', () => {
         .set(authHeaders())
         .send({ extractor_id: 'ext-1' });
       expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 400 for invalid token type in expression', async () => {
+      dataMapperModel.findSetById.mockResolvedValue(FAKE_SET);
+      const res = await request(app)
+        .post('/api/data-map-rules')
+        .set(authHeaders())
+        .send({
+          name: 'Bad Rule', extractor_id: 'ext-1', data_map_set_id: 'set-1',
+          lookups: [],
+          targets: [{ schema_field: 'vendor_code', expression: [{ type: 'bad', value: 'x' }] }],
+        });
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toContain("invalid type 'bad'");
+    });
+
+    it('returns 400 for invalid operator in expression', async () => {
+      dataMapperModel.findSetById.mockResolvedValue(FAKE_SET);
+      const res = await request(app)
+        .post('/api/data-map-rules')
+        .set(authHeaders())
+        .send({
+          name: 'Bad Rule', extractor_id: 'ext-1', data_map_set_id: 'set-1',
+          lookups: [],
+          targets: [{ schema_field: 'vendor_code', expression: [{ type: 'operator', value: ';' }] }],
+        });
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toContain("invalid operator");
+    });
+
+    it('returns 400 for token with empty value', async () => {
+      dataMapperModel.findSetById.mockResolvedValue(FAKE_SET);
+      const res = await request(app)
+        .post('/api/data-map-rules')
+        .set(authHeaders())
+        .send({
+          name: 'Bad Rule', extractor_id: 'ext-1', data_map_set_id: 'set-1',
+          lookups: [],
+          targets: [{ schema_field: 'vendor_code', expression: [{ type: 'set', value: '' }] }],
+        });
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toContain('value is required');
     });
   });
 

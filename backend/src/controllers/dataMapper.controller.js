@@ -1,6 +1,27 @@
 const dataMapperModel = require('../models/dataMapper.model');
 const dataMapSetService = require('../services/dataMapSet.service');
 
+const ALLOWED_TOKEN_TYPES = new Set(['set', 'extractor', 'operator', 'literal']);
+const ALLOWED_OPERATORS = new Set(['+', '-', '*', '/', '(', ')']);
+
+function validateTargets(targets) {
+  for (let i = 0; i < targets.length; i++) {
+    const t = targets[i];
+    if (!t.schema_field) return `Target ${i + 1}: schema_field is required`;
+    if (t.expression != null && !Array.isArray(t.expression)) return `Target ${i + 1}: expression must be an array`;
+    if (Array.isArray(t.expression)) {
+      for (let k = 0; k < t.expression.length; k++) {
+        const tok = t.expression[k];
+        if (!tok || typeof tok !== 'object') return `Target ${i + 1}, token ${k + 1}: must be an object`;
+        if (!ALLOWED_TOKEN_TYPES.has(tok.type)) return `Target ${i + 1}, token ${k + 1}: invalid type '${tok.type}'`;
+        if (typeof tok.value !== 'string' || tok.value.trim() === '') return `Target ${i + 1}, token ${k + 1}: value is required`;
+        if (tok.type === 'operator' && !ALLOWED_OPERATORS.has(tok.value)) return `Target ${i + 1}, token ${k + 1}: invalid operator '${tok.value}'`;
+      }
+    }
+  }
+  return null;
+}
+
 module.exports = {
   // ── Data Map Sets ─────────────────────────────────────────────────────────
 
@@ -218,6 +239,10 @@ module.exports = {
       const set = await dataMapperModel.findSetById(req.params.id);
       if (!set) return res.status(404).json({ error: 'Not found' });
       if (set.user_id !== req.dbUser.id) return res.status(403).json({ error: 'Forbidden' });
+      const record = await dataMapperModel.findRecordById(req.params.recordId);
+      if (!record || record.data_map_set_id !== req.params.id) {
+        return res.status(404).json({ error: 'Record not found in this set' });
+      }
       await dataMapperModel.removeRecord(req.params.recordId);
       await dataMapperModel.touchSet(req.params.id, req.dbUser.id);
       return res.status(204).send();
@@ -267,7 +292,9 @@ module.exports = {
 
       // Merge with existing values so partial updates don't drop unspecified columns
       const existing = await dataMapperModel.findRecordById(req.params.recordId);
-      if (!existing) return res.status(404).json({ error: 'Record not found' });
+      if (!existing || existing.data_map_set_id !== req.params.id) {
+        return res.status(404).json({ error: 'Record not found in this set' });
+      }
       const existingVals = typeof existing.values === 'string' ? JSON.parse(existing.values) : existing.values || {};
       const merged = { ...existingVals, ...coerced };
 
@@ -295,6 +322,15 @@ module.exports = {
       const { name, extractor_id, data_map_set_id, lookups, targets } = req.body;
       if (!name) return res.status(400).json({ error: 'name is required' });
       if (!extractor_id) return res.status(400).json({ error: 'extractor_id is required' });
+      if (!data_map_set_id) return res.status(400).json({ error: 'data_map_set_id is required' });
+      // Verify set exists and belongs to user
+      const set = await dataMapperModel.findSetById(data_map_set_id);
+      if (!set) return res.status(400).json({ error: 'Data map set not found' });
+      if (set.user_id !== req.dbUser.id) return res.status(403).json({ error: 'Forbidden' });
+      if (targets && targets.length > 0) {
+        const targetErr = validateTargets(targets);
+        if (targetErr) return res.status(400).json({ error: targetErr });
+      }
       const rule = await dataMapperModel.createRule({
         userId: req.dbUser.id,
         name,
@@ -326,6 +362,17 @@ module.exports = {
       const rule = await dataMapperModel.findRuleById(req.params.id);
       if (!rule) return res.status(404).json({ error: 'Not found' });
       if (rule.user_id !== req.dbUser.id) return res.status(403).json({ error: 'Forbidden' });
+      // Verify set ownership if data_map_set_id is being changed
+      if (req.body.data_map_set_id !== undefined && req.body.data_map_set_id !== rule.data_map_set_id) {
+        if (!req.body.data_map_set_id) return res.status(400).json({ error: 'data_map_set_id cannot be cleared' });
+        const set = await dataMapperModel.findSetById(req.body.data_map_set_id);
+        if (!set) return res.status(400).json({ error: 'Data map set not found' });
+        if (set.user_id !== req.dbUser.id) return res.status(403).json({ error: 'Forbidden' });
+      }
+      if (req.body.targets && req.body.targets.length > 0) {
+        const targetErr = validateTargets(req.body.targets);
+        if (targetErr) return res.status(400).json({ error: targetErr });
+      }
       const updated = await dataMapperModel.updateRule(req.params.id, req.body, req.dbUser.id);
       return res.json(updated);
     } catch (err) {

@@ -8,6 +8,16 @@ const OPERATORS = ['+', '-', '*', '/', '(', ')'];
 
 const selectCls = 'border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-xs bg-white dark:bg-gray-800 text-gray-900 dark:text-white w-full';
 
+function chipClass(type) {
+  switch (type) {
+    case 'set': return 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300';
+    case 'extractor': return 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300';
+    case 'operator': return 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 font-mono';
+    case 'literal': return 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300';
+    default: return 'bg-gray-100 text-gray-600';
+  }
+}
+
 function DataMapRuleEdit() {
   const { id } = useParams();
   const isNew = id === 'new';
@@ -22,6 +32,7 @@ function DataMapRuleEdit() {
   const [lookups, setLookups] = useState([]);
   const [targets, setTargets] = useState([]);
   const [usage, setUsage] = useState([]);
+  const [literalInputs, setLiteralInputs] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -90,16 +101,31 @@ function DataMapRuleEdit() {
   }
 
   function addTarget() {
-    setTargets((prev) => [...prev, { schema_field: '', expression: '' }]);
+    setTargets((prev) => [...prev, { schema_field: '', expression: [] }]);
   }
 
-  function appendToExpression(i, token) {
+  function appendToken(i, token) {
     setTargets((prev) => prev.map((x, j) => {
       if (j !== i) return x;
-      const expr = x.expression || '';
-      const sep = expr && !expr.endsWith(' ') ? ' ' : '';
-      return { ...x, expression: expr + sep + token };
+      const expr = Array.isArray(x.expression) ? x.expression : [];
+      return { ...x, expression: [...expr, token] };
     }));
+  }
+
+  function removeToken(i, tokenIdx) {
+    setTargets((prev) => prev.map((x, j) => {
+      if (j !== i) return x;
+      const expr = Array.isArray(x.expression) ? [...x.expression] : [];
+      expr.splice(tokenIdx, 1);
+      return { ...x, expression: expr };
+    }));
+  }
+
+  function addLiteral(i) {
+    const val = (literalInputs[i] || '').trim();
+    if (!val) return;
+    appendToken(i, { type: 'literal', value: val });
+    setLiteralInputs((prev) => ({ ...prev, [i]: '' }));
   }
 
   async function handleSave(e) {
@@ -111,10 +137,10 @@ function DataMapRuleEdit() {
       const payload = { name, extractor_id: extractorId, data_map_set_id: dataMapSetId || null, lookups, targets };
       if (isNew) {
         await dataMapperService.createRule(payload);
-        navigate('/app?tab=data-mapper');
+        navigate('/app?tab=data-mapper&subtab=rules');
       } else {
         await dataMapperService.updateRule(id, payload);
-        navigate('/app?tab=data-mapper');
+        navigate('/app?tab=data-mapper&subtab=rules');
       }
     } catch (err) {
       setError(err.message);
@@ -127,7 +153,7 @@ function DataMapRuleEdit() {
     if (!window.confirm('Delete this rule?')) return;
     try {
       await dataMapperService.removeRule(id);
-      navigate('/app?tab=data-mapper');
+      navigate('/app?tab=data-mapper&subtab=rules');
     } catch (err) {
       setError(err.response?.data?.error || err.message);
     }
@@ -138,7 +164,7 @@ function DataMapRuleEdit() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-8">
       <div className="max-w-3xl mx-auto">
-        <button onClick={() => navigate('/app?tab=data-mapper')} className="text-sm text-indigo-600 hover:underline mb-6 block">
+        <button onClick={() => navigate('/app?tab=data-mapper&subtab=rules')} className="text-sm text-indigo-600 hover:underline mb-6 block">
           ← Back to Data Mapper
         </button>
         <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-6">
@@ -268,88 +294,131 @@ function DataMapRuleEdit() {
             <div className="flex items-center justify-between mb-3">
               <div>
                 <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Map Targets</h2>
-                <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">For each matched row, populate a schema field with a value from the set</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">For each matched row, populate a schema field with a value</p>
               </div>
               <button type="button" onClick={addTarget} className="text-xs text-indigo-600 hover:underline shrink-0">+ Add target</button>
             </div>
             <div className="space-y-2">
-              {targets.map((tg, i) => (
-                <div key={i} className="bg-gray-50 dark:bg-gray-700/60 rounded-lg p-3 space-y-2">
-                  {/* Schema field selector + delete */}
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={tg.schema_field}
-                      onChange={(e) => setTargets((prev) => prev.map((x, j) => j === i ? { ...x, schema_field: e.target.value } : x))}
-                      className={selectCls + ' flex-1'}
-                      disabled={schemaFields.length === 0}
-                    >
-                      <option value="">Schema field…</option>
-                      {schemaFields.map((f) => <option key={f.name} value={f.name}>{f.name}</option>)}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => setTargets((prev) => prev.filter((_, j) => j !== i))}
-                      className="text-red-400 hover:text-red-600 text-sm px-1 shrink-0"
-                    >×</button>
-                  </div>
-
-                  {/* Expression builder */}
-                  <div className="space-y-2 pt-1">
-                    <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Value</label>
-                    <textarea
-                      value={tg.expression || ''}
-                      onChange={(e) => setTargets((prev) => prev.map((x, j) => j === i ? { ...x, expression: e.target.value } : x))}
-                      placeholder="Click a set column chip or build an expression"
-                      rows={1}
-                      className="w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1.5 text-xs bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono resize-none focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                    />
-                    {/* Set column chips */}
-                    {setHeaders.length > 0 && (
-                      <div className="flex flex-wrap gap-1 items-start">
-                        <span className="text-xs text-gray-400 dark:text-gray-500 w-20 shrink-0 pt-0.5">Set columns</span>
-                        <div className="flex flex-wrap gap-1">
-                          {setHeaders.map((h) => (
-                            <button
-                              key={h.name}
-                              type="button"
-                              onClick={() => appendToExpression(i, h.name)}
-                              className="px-2 py-0.5 text-xs bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 rounded hover:bg-amber-200 dark:hover:bg-amber-900/70 transition-colors"
-                              title={`Set column: ${h.name} (${h.data_type})`}
-                            >
-                              {h.name}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {/* Schema variable + operators */}
-                    <div className="flex flex-wrap gap-1 items-start">
-                      <span className="text-xs text-gray-400 dark:text-gray-500 w-20 shrink-0 pt-0.5">Variables</span>
+              {targets.map((tg, i) => {
+                const tokens = Array.isArray(tg.expression) ? tg.expression : [];
+                return (
+                  <div key={i} className="bg-gray-50 dark:bg-gray-700/60 rounded-lg p-3 space-y-2">
+                    {/* Target field selector + delete */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-gray-500 dark:text-gray-400 w-20 shrink-0">Target field</span>
+                      <select
+                        value={tg.schema_field}
+                        onChange={(e) => setTargets((prev) => prev.map((x, j) => j === i ? { ...x, schema_field: e.target.value } : x))}
+                        className={selectCls + ' flex-1'}
+                        disabled={schemaFields.length === 0}
+                      >
+                        <option value="">Schema field…</option>
+                        {schemaFields.map((f) => <option key={f.name} value={f.name}>{f.name}</option>)}
+                      </select>
                       <button
                         type="button"
-                        onClick={() => appendToExpression(i, 'schema')}
-                        className="px-2 py-0.5 text-xs bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 rounded hover:bg-indigo-200 dark:hover:bg-indigo-900/70 transition-colors"
-                        title={`Current value of: ${tg.schema_field || '(select schema field)'}`}
-                      >
-                        schema{tg.schema_field ? ` (${tg.schema_field})` : ''}
-                      </button>
+                        onClick={() => setTargets((prev) => prev.filter((_, j) => j !== i))}
+                        className="text-red-400 hover:text-red-600 text-sm px-1 shrink-0"
+                      >×</button>
                     </div>
-                    <div className="flex flex-wrap gap-1 items-center">
-                      <span className="text-xs text-gray-400 dark:text-gray-500 w-20 shrink-0">Operators</span>
-                      {OPERATORS.map((op) => (
+
+                    {/* Expression token display */}
+                    <div className="flex items-start gap-2 pt-1">
+                      <span className="text-xs font-medium text-gray-500 dark:text-gray-400 w-20 shrink-0 pt-1">Value</span>
+                      <div className="flex-1 flex flex-wrap gap-1 items-center min-h-[28px] border border-gray-300 dark:border-gray-600 rounded px-2 py-1.5 bg-white dark:bg-gray-800">
+                        {tokens.length > 0 ? tokens.map((tok, k) => (
+                          <span
+                            key={k}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded ${chipClass(tok.type)}`}
+                          >
+                            {tok.value}
+                            <button
+                              type="button"
+                              onClick={() => removeToken(i, k)}
+                              className="text-current opacity-40 hover:opacity-100 ml-0.5 leading-none"
+                            >×</button>
+                          </span>
+                        )) : (
+                          <span className="text-xs text-gray-400 dark:text-gray-500">Click chips below to build expression</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Chip palette */}
+                    <div className="space-y-1.5 pt-1">
+                      {/* Set column chips */}
+                      {setHeaders.length > 0 && (
+                        <div className="flex flex-wrap gap-1 items-start">
+                          <span className="text-xs text-gray-400 dark:text-gray-500 w-20 shrink-0 pt-0.5">Set columns</span>
+                          <div className="flex flex-wrap gap-1">
+                            {setHeaders.map((h) => (
+                              <button
+                                key={h.name}
+                                type="button"
+                                onClick={() => appendToken(i, { type: 'set', value: h.name })}
+                                className="px-2 py-0.5 text-xs bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 rounded hover:bg-amber-200 dark:hover:bg-amber-900/70 transition-colors"
+                                title={`Set column: ${h.name} (${h.data_type})`}
+                              >
+                                {h.name}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {/* Extractor field chips */}
+                      {schemaFields.length > 0 && (
+                        <div className="flex flex-wrap gap-1 items-start">
+                          <span className="text-xs text-gray-400 dark:text-gray-500 w-20 shrink-0 pt-0.5">Extractor</span>
+                          <div className="flex flex-wrap gap-1">
+                            {schemaFields.map((f) => (
+                              <button
+                                key={f.name}
+                                type="button"
+                                onClick={() => appendToken(i, { type: 'extractor', value: f.name })}
+                                className="px-2 py-0.5 text-xs bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 rounded hover:bg-indigo-200 dark:hover:bg-indigo-900/70 transition-colors"
+                                title={`Extractor field: ${f.name} (${f.data_type})`}
+                              >
+                                {f.name}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {/* Operators */}
+                      <div className="flex flex-wrap gap-1 items-center">
+                        <span className="text-xs text-gray-400 dark:text-gray-500 w-20 shrink-0">Operators</span>
+                        {OPERATORS.map((op) => (
+                          <button
+                            key={op}
+                            type="button"
+                            onClick={() => appendToken(i, { type: 'operator', value: op })}
+                            className="px-2 py-0.5 text-xs font-mono bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
+                          >
+                            {op}
+                          </button>
+                        ))}
+                      </div>
+                      {/* Literal input */}
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs text-gray-400 dark:text-gray-500 w-20 shrink-0">Literal</span>
+                        <input
+                          type="text"
+                          value={literalInputs[i] || ''}
+                          onChange={(e) => setLiteralInputs((prev) => ({ ...prev, [i]: e.target.value }))}
+                          placeholder="Value…"
+                          className="w-24 border border-gray-300 dark:border-gray-600 rounded px-2 py-0.5 text-xs bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addLiteral(i); } }}
+                        />
                         <button
-                          key={op}
                           type="button"
-                          onClick={() => appendToExpression(i, op)}
-                          className="px-2 py-0.5 text-xs font-mono bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
-                        >
-                          {op}
-                        </button>
-                      ))}
+                          onClick={() => addLiteral(i)}
+                          className="text-xs text-indigo-600 hover:underline"
+                        >Add</button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               {targets.length === 0 && <p className="text-xs text-gray-400 dark:text-gray-500">No targets yet.</p>}
             </div>
           </div>
