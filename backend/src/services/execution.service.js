@@ -410,7 +410,7 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
           });
           childDocIds.push(newDoc.id);
           const [unroutedExec] = await documentExecutionModel.createMany(workflowRunId, [newDoc.id]);
-          await documentExecutionModel.updateStatus(unroutedExec.id, { status: 'unrouted', currentNodeId: nodeId });
+          await documentExecutionModel.updateStatus(unroutedExec.id, { status: 'unrouted', currentNodeId: nodeId, unroutedPort: 'default' });
 
         } else if (splitEdges.length === 1) {
           // Single edge — existing behaviour: one doc, one exec, one downstream node.
