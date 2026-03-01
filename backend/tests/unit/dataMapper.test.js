@@ -137,8 +137,7 @@ describe('Data Map Set routes', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('reports validation errors for type mismatches', async () => {
-      dataMapperModel.createSet.mockResolvedValue({ ...FAKE_SET, records: [] });
+    it('rejects entirely on type validation errors (400)', async () => {
       const csvContent = 'Amount\nnot_a_number\n42\n';
       const headers = JSON.stringify([{ name: 'Amount', data_type: 'number' }]);
 
@@ -149,9 +148,26 @@ describe('Data Map Set routes', () => {
         .field('headers', headers)
         .attach('file', Buffer.from(csvContent), { filename: 'test.csv', contentType: 'text/csv' });
 
-      expect(res.statusCode).toBe(201);
+      expect(res.statusCode).toBe(400);
       expect(res.body.validationErrors).toHaveLength(1);
       expect(res.body.validationErrors[0].column).toBe('Amount');
+      expect(dataMapperModel.createSet).not.toHaveBeenCalled();
+    });
+
+    it('rejects when file columns do not match declared headers', async () => {
+      const csvContent = 'Name,Extra\nAlice,foo\n';
+      const headers = JSON.stringify([{ name: 'Name', data_type: 'string' }, { name: 'Code', data_type: 'string' }]);
+
+      const res = await request(app)
+        .post('/api/data-map-sets/upload')
+        .set(authHeaders())
+        .field('name', 'Test')
+        .field('headers', headers)
+        .attach('file', Buffer.from(csvContent), { filename: 'test.csv', contentType: 'text/csv' });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toContain('not found in file');
+      expect(dataMapperModel.createSet).not.toHaveBeenCalled();
     });
   });
 
@@ -267,6 +283,33 @@ describe('Data Map Set routes', () => {
       expect(res.body.added).toBe(0);
       expect(res.body.duplicatesRemoved).toBe(1);
     });
+
+    it('rejects entirely on type validation errors in bulk add (400)', async () => {
+      const typedSet = {
+        ...FAKE_SET,
+        headers: [{ name: 'Amount', data_type: 'number' }, { name: 'Label', data_type: 'string' }],
+      };
+      dataMapperModel.findSetById.mockResolvedValue(typedSet);
+      const res = await request(app)
+        .post('/api/data-map-sets/set-1/records')
+        .set(authHeaders())
+        .send({ records: [{ Amount: 'not_a_number', Label: 'ok' }] });
+      expect(res.statusCode).toBe(400);
+      expect(res.body.validationErrors).toBeDefined();
+      expect(dataMapperModel.addRecords).not.toHaveBeenCalled();
+    });
+
+    it('rejects file upload with mismatched columns (400)', async () => {
+      dataMapperModel.findSetById.mockResolvedValue(FAKE_SET);
+      const csvContent = 'VendorName,ExtraCol\nAcme,foo\n';
+      const res = await request(app)
+        .post('/api/data-map-sets/set-1/records')
+        .set(authHeaders())
+        .attach('file', Buffer.from(csvContent), { filename: 'add.csv', contentType: 'text/csv' });
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toContain('do not match');
+      expect(dataMapperModel.addRecords).not.toHaveBeenCalled();
+    });
   });
 
   describe('DELETE /api/data-map-sets/:id/records/:recordId', () => {
@@ -281,7 +324,7 @@ describe('Data Map Set routes', () => {
   });
 
   describe('PATCH /api/data-map-sets/:id/records/:recordId', () => {
-    it('updates a record', async () => {
+    it('updates a record with valid values', async () => {
       dataMapperModel.findSetById.mockResolvedValue(FAKE_SET);
       dataMapperModel.updateRecord.mockResolvedValue({
         id: 'rec-1',
@@ -293,6 +336,42 @@ describe('Data Map Set routes', () => {
         .send({ values: { VendorName: 'Updated', VendorCode: 'V999' } });
       expect(res.statusCode).toBe(200);
       expect(res.body.values.VendorName).toBe('Updated');
+    });
+
+    it('rejects unknown columns (400)', async () => {
+      dataMapperModel.findSetById.mockResolvedValue(FAKE_SET);
+      const res = await request(app)
+        .patch('/api/data-map-sets/set-1/records/rec-1')
+        .set(authHeaders())
+        .send({ values: { VendorName: 'OK', UnknownCol: 'bad' } });
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toContain('Unknown columns');
+      expect(dataMapperModel.updateRecord).not.toHaveBeenCalled();
+    });
+
+    it('rejects type-invalid values (400)', async () => {
+      const typedSet = {
+        ...FAKE_SET,
+        headers: [{ name: 'Amount', data_type: 'number' }, { name: 'Label', data_type: 'string' }],
+      };
+      dataMapperModel.findSetById.mockResolvedValue(typedSet);
+      const res = await request(app)
+        .patch('/api/data-map-sets/set-1/records/rec-1')
+        .set(authHeaders())
+        .send({ values: { Amount: 'not_a_number' } });
+      expect(res.statusCode).toBe(400);
+      expect(res.body.validationErrors).toBeDefined();
+      expect(dataMapperModel.updateRecord).not.toHaveBeenCalled();
+    });
+
+    it('rejects missing values object (400)', async () => {
+      dataMapperModel.findSetById.mockResolvedValue(FAKE_SET);
+      const res = await request(app)
+        .patch('/api/data-map-sets/set-1/records/rec-1')
+        .set(authHeaders())
+        .send({});
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toContain('values object is required');
     });
   });
 });

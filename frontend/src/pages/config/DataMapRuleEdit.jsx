@@ -337,7 +337,7 @@ function DataMapRuleEdit() {
                         <textarea
                           value={tg.calculation_expression}
                           onChange={(e) => setTargets((prev) => prev.map((x, j) => j === i ? { ...x, calculation_expression: e.target.value } : x))}
-                          placeholder="e.g. totalAmount * exchangeRate / quantity"
+                          placeholder="e.g. schema * mapset"
                           rows={2}
                           className="w-full border border-gray-300 dark:border-gray-600 rounded px-2 py-1.5 text-xs bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono resize-none focus:outline-none focus:ring-1 focus:ring-indigo-500"
                         />
@@ -355,42 +355,28 @@ function DataMapRuleEdit() {
                             </button>
                           ))}
                         </div>
-                        {/* Schema field chips — number only in calculation mode */}
-                        {schemaFields.filter((f) => f.data_type === 'number').length > 0 && (
-                          <div className="flex flex-wrap gap-1 items-start">
-                            <span className="text-xs text-gray-400 dark:text-gray-500 w-16 shrink-0 pt-0.5">Schema</span>
-                            <div className="flex flex-wrap gap-1">
-                              {schemaFields.filter((f) => f.data_type === 'number').map((f) => (
-                                <button
-                                  key={f.name}
-                                  type="button"
-                                  onClick={() => appendToExpression(i, f.name)}
-                                  className="px-2 py-0.5 text-xs bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 rounded hover:bg-indigo-200 dark:hover:bg-indigo-900/70 transition-colors"
-                                >
-                                  {f.name}
-                                </button>
-                              ))}
-                            </div>
+                        {/* Variable chips: schema = target schema field value, mapset = matched set column value */}
+                        <div className="flex flex-wrap gap-1 items-start">
+                          <span className="text-xs text-gray-400 dark:text-gray-500 w-16 shrink-0 pt-0.5">Variables</span>
+                          <div className="flex flex-wrap gap-1">
+                            <button
+                              type="button"
+                              onClick={() => appendToExpression(i, 'schema')}
+                              className="px-2 py-0.5 text-xs bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 rounded hover:bg-indigo-200 dark:hover:bg-indigo-900/70 transition-colors"
+                              title={`Current value of schema field: ${tg.schema_field || '(not set)'}`}
+                            >
+                              schema{tg.schema_field ? ` (${tg.schema_field})` : ''}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => appendToExpression(i, 'mapset')}
+                              className="px-2 py-0.5 text-xs bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 rounded hover:bg-amber-200 dark:hover:bg-amber-900/70 transition-colors"
+                              title={`Matched value from set column: ${tg.set_column || '(not set)'}`}
+                            >
+                              mapset{tg.set_column ? ` (${tg.set_column})` : ''}
+                            </button>
                           </div>
-                        )}
-                        {/* Set column chips — number only in calculation mode */}
-                        {tgSetHeaders.filter((h) => h.data_type === 'number').length > 0 && (
-                          <div className="flex flex-wrap gap-1 items-start">
-                            <span className="text-xs text-gray-400 dark:text-gray-500 w-16 shrink-0 pt-0.5">Set cols</span>
-                            <div className="flex flex-wrap gap-1">
-                              {tgSetHeaders.filter((h) => h.data_type === 'number').map((h) => (
-                                <button
-                                  key={h.name}
-                                  type="button"
-                                  onClick={() => appendToExpression(i, h.name)}
-                                  className="px-2 py-0.5 text-xs bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 rounded hover:bg-amber-200 dark:hover:bg-amber-900/70 transition-colors"
-                                >
-                                  {h.name}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        )}
+                        </div>
                       </div>
                     )}
                   </div>

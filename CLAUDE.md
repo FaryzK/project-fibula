@@ -88,5 +88,4 @@ Examples:
 - pgvector extension must be enabled in Supabase for extractor training feedback embeddings
 - Workflow execution runs in-process (no external job queue for MVP)
 - A document_execution record tracks each document's journey through a workflow
-- SWITCH node always has a fallback output port in addition to case ports
 - Reconciliation node input ports are labeled with extractor names from the rule config

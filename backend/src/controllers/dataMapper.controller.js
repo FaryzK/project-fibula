@@ -50,6 +50,10 @@ module.exports = {
 
       const { valid, errors, duplicatesRemoved } = dataMapSetService.validateAndCoerceRows(rows, typedHeaders);
 
+      if (errors.length > 0) {
+        return res.status(400).json({ error: 'Validation failed — fix all type errors before creating', validationErrors: errors });
+      }
+
       const set = await dataMapperModel.createSet({
         userId: req.dbUser.id,
         name,
@@ -57,7 +61,7 @@ module.exports = {
         records: valid,
       });
 
-      return res.status(201).json({ ...set, validationErrors: errors, duplicatesRemoved });
+      return res.status(201).json({ ...set, duplicatesRemoved });
     } catch (err) {
       if (err.message && (err.message.includes('JSON') || err.message.includes('CSV'))) {
         return res.status(400).json({ error: err.message });
@@ -152,11 +156,22 @@ module.exports = {
       if (set.user_id !== req.dbUser.id) return res.status(403).json({ error: 'Forbidden' });
 
       const headers = typeof set.headers === 'string' ? JSON.parse(set.headers) : set.headers || [];
+      const headerNames = headers.map((h) => typeof h === 'object' ? h.name : h);
       let rows;
 
       if (req.file) {
         // File upload (bulk add)
         const parsed = dataMapSetService.parseFile(req.file.buffer, req.file.mimetype);
+        // Enforce exact column-name match
+        const fileHeaders = parsed.headers;
+        const missing = headerNames.filter((n) => !fileHeaders.includes(n));
+        const extra = fileHeaders.filter((n) => !headerNames.includes(n));
+        if (missing.length > 0 || extra.length > 0) {
+          const parts = [];
+          if (missing.length) parts.push(`missing: ${missing.join(', ')}`);
+          if (extra.length) parts.push(`unexpected: ${extra.join(', ')}`);
+          return res.status(400).json({ error: `File columns do not match set headers — ${parts.join('; ')}` });
+        }
         rows = parsed.rows;
       } else if (req.body.records) {
         // JSON body
@@ -167,7 +182,11 @@ module.exports = {
 
       const { valid, errors, duplicatesRemoved } = dataMapSetService.validateAndCoerceRows(rows, headers);
 
-      // Also deduplicate against existing records
+      if (errors.length > 0) {
+        return res.status(400).json({ error: 'Validation failed — fix all type errors before adding', validationErrors: errors });
+      }
+
+      // Deduplicate against existing records
       const existingRecords = set.records || [];
       const existingKeys = new Set(
         existingRecords.map((r) => {
@@ -183,7 +202,6 @@ module.exports = {
 
       return res.status(201).json({
         added: added.length,
-        validationErrors: errors,
         duplicatesRemoved: duplicatesRemoved + existingDuplicates,
       });
     } catch (err) {
@@ -211,7 +229,41 @@ module.exports = {
       const set = await dataMapperModel.findSetById(req.params.id);
       if (!set) return res.status(404).json({ error: 'Not found' });
       if (set.user_id !== req.dbUser.id) return res.status(403).json({ error: 'Forbidden' });
-      const row = await dataMapperModel.updateRecord(req.params.recordId, req.body.values);
+
+      const values = req.body.values;
+      if (!values || typeof values !== 'object') {
+        return res.status(400).json({ error: 'values object is required' });
+      }
+
+      const headers = typeof set.headers === 'string' ? JSON.parse(set.headers) : set.headers || [];
+      const headerMap = new Map(headers.map((h) => [typeof h === 'object' ? h.name : h, h]));
+
+      // Reject unknown keys
+      const unknownKeys = Object.keys(values).filter((k) => !headerMap.has(k));
+      if (unknownKeys.length > 0) {
+        return res.status(400).json({ error: `Unknown columns: ${unknownKeys.join(', ')}` });
+      }
+
+      // Validate each value against declared type
+      const { validateValue } = require('../utils/coercion');
+      const errors = [];
+      const coerced = {};
+      for (const [key, val] of Object.entries(values)) {
+        const hdr = headerMap.get(key);
+        const dataType = typeof hdr === 'object' ? hdr.data_type : 'string';
+        const result = validateValue(val, dataType);
+        if (!result.valid) {
+          errors.push({ column: key, value: val, error: result.error });
+        } else {
+          coerced[key] = result.coerced;
+        }
+      }
+
+      if (errors.length > 0) {
+        return res.status(400).json({ error: 'Validation failed', validationErrors: errors });
+      }
+
+      const row = await dataMapperModel.updateRecord(req.params.recordId, coerced);
       return res.json(row);
     } catch (err) {
       next(err);
