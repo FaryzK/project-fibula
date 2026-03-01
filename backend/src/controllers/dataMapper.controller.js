@@ -94,7 +94,7 @@ module.exports = {
       const set = await dataMapperModel.findSetById(req.params.id);
       if (!set) return res.status(404).json({ error: 'Not found' });
       if (set.user_id !== req.dbUser.id) return res.status(403).json({ error: 'Forbidden' });
-      const updated = await dataMapperModel.updateSet(req.params.id, req.body);
+      const updated = await dataMapperModel.updateSet(req.params.id, req.body, req.dbUser.id);
       return res.json(updated);
     } catch (err) {
       next(err);
@@ -199,6 +199,7 @@ module.exports = {
       const existingDuplicates = valid.length - newUnique.length;
 
       const added = await dataMapperModel.addRecords(req.params.id, newUnique);
+      if (added.length > 0) await dataMapperModel.touchSet(req.params.id, req.dbUser.id);
 
       return res.status(201).json({
         added: added.length,
@@ -218,6 +219,7 @@ module.exports = {
       if (!set) return res.status(404).json({ error: 'Not found' });
       if (set.user_id !== req.dbUser.id) return res.status(403).json({ error: 'Forbidden' });
       await dataMapperModel.removeRecord(req.params.recordId);
+      await dataMapperModel.touchSet(req.params.id, req.dbUser.id);
       return res.status(204).send();
     } catch (err) {
       next(err);
@@ -270,6 +272,7 @@ module.exports = {
       const merged = { ...existingVals, ...coerced };
 
       const row = await dataMapperModel.updateRecord(req.params.recordId, merged);
+      await dataMapperModel.touchSet(req.params.id, req.dbUser.id);
       return res.json(row);
     } catch (err) {
       next(err);
@@ -289,13 +292,14 @@ module.exports = {
 
   async createRule(req, res, next) {
     try {
-      const { name, extractor_id, lookups, targets } = req.body;
+      const { name, extractor_id, data_map_set_id, lookups, targets } = req.body;
       if (!name) return res.status(400).json({ error: 'name is required' });
       if (!extractor_id) return res.status(400).json({ error: 'extractor_id is required' });
       const rule = await dataMapperModel.createRule({
         userId: req.dbUser.id,
         name,
         extractorId: extractor_id,
+        dataMapSetId: data_map_set_id,
         lookups: lookups || [],
         targets: targets || [],
       });
@@ -322,8 +326,20 @@ module.exports = {
       const rule = await dataMapperModel.findRuleById(req.params.id);
       if (!rule) return res.status(404).json({ error: 'Not found' });
       if (rule.user_id !== req.dbUser.id) return res.status(403).json({ error: 'Forbidden' });
-      const updated = await dataMapperModel.updateRule(req.params.id, req.body);
+      const updated = await dataMapperModel.updateRule(req.params.id, req.body, req.dbUser.id);
       return res.json(updated);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async getRuleUsage(req, res, next) {
+    try {
+      const rule = await dataMapperModel.findRuleById(req.params.id);
+      if (!rule) return res.status(404).json({ error: 'Not found' });
+      if (rule.user_id !== req.dbUser.id) return res.status(403).json({ error: 'Forbidden' });
+      const usage = await dataMapperModel.findRuleUsage(req.params.id);
+      return res.json(usage);
     } catch (err) {
       next(err);
     }

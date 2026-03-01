@@ -37,6 +37,24 @@ DATA MAPPER SERVICE
 
 The Data Mapper tab on the landing page has two sub-views: Data Map Sets and Data Map Rules.
 
+Data Map Sets List
+Displayed as a table with columns: Name, Rows, Columns, Rules, Updated by, Updated at, Actions.
+- Name: clickable, navigates to the set detail/edit page.
+- Rows: number of records in the set.
+- Columns: number of column headers.
+- Rules: number of data map rules referencing this set. Clickable — opens a dialog listing the referencing rules with links to each rule's edit page.
+- Updated by: name of the user who last modified the set.
+- Updated at: timestamp of the last modification.
+- Actions: Edit (navigate to set page), Download CSV, Delete. Delete is disabled if the set is referenced by any rule (tooltip shows count).
+
+Data Map Rules List
+Displayed as a table with columns: Name, Nodes, Updated by, Updated at, Actions.
+- Name: clickable, navigates to the rule edit page.
+- Nodes: number of workflow nodes using this rule. Clickable — opens a dialog listing the workflows and node names with links that navigate to the canvas with the node focused.
+- Updated by: name of the user who last modified the rule.
+- Updated at: timestamp of the last modification.
+- Actions: Edit (navigate to rule page), Delete. Delete is disabled if the rule is used by any node (tooltip shows count).
+
 
 ---
 
@@ -70,30 +88,27 @@ Users toggle between View and Edit mode. In Edit mode:
 - Users can bulk-add rows by uploading another CSV or JSON file. New rows are validated against the existing column types. Duplicates (against existing + new rows) are removed.
 - Users can delete individual rows
 
-Rules Tab
-Shows all data map rules that reference this set, with links to each rule's edit page. Prevents confusion about downstream impact when modifying set data.
-
 Delete Protection
-A data map set cannot be deleted if it is referenced by any data map rule (via lookup criteria or map targets). The delete button is disabled and shows a tooltip listing the referencing rules.
+A data map set cannot be deleted if it is referenced by any data map rule. The delete button is disabled and shows a tooltip listing the referencing rules.
 
 
 ---
 
 DATA MAP RULES
 
-A data map rule defines how to enrich a document's extracted metadata using a data map set.
+A data map rule defines how to enrich a document's extracted metadata using a single data map set.
 
 Creating a Rule
 Each rule has:
 - Rule name
 - Extractor schema: which extractor's schema this rule targets. The schema determines the available header fields and table columns when configuring lookups and targets.
+- Data Map Set: the single reference table used for all lookups and targets in this rule.
 
 A rule consists of two parts: Lookup Criteria and Map Targets.
 
 1. Lookup Criteria
-Defines how to find the correct row in the data map set. Users add one or more lookup conditions (up to 7). Each condition:
-- Selects a data map set
-- Selects a set column to match against
+Defines how to find the correct row in the rule's data map set. Users add one or more lookup conditions (up to 7). Each condition:
+- Selects a set column to match against (from the rule's data map set)
 - Selects a schema field (header field or table column) whose extracted value to compare
 - Sets match type: Exact Match or Fuzzy Match (with a configurable similarity threshold, default 80%)
 
@@ -102,32 +117,78 @@ All lookup conditions are applied with AND logic — a candidate record must sat
 Table column schema fields are referenced as "TableType.ColumnName" (e.g. "Invoice Items.Description"). Header fields are referenced by name directly (e.g. "VendorName").
 
 2. Map Targets
-Defines which fields to populate with values from the matched record. Each target:
-- Sets target type: Header (update a header field) or Table Column (update a column in a table row)
-- Selects a schema field to update
-- Selects a data map set and set column to read the value from
-- Sets mode: Map (write the set column value directly) or Calculation (evaluate a formula)
+Defines which schema fields to populate from the matched record. Each target has:
+- Schema field: which field to write to (header field or table column)
+- Expression: what value to write — built using clickable chips
 
-Calculation Mode
-In calculation mode, the user writes a formula expression using clickable chips. Only schema fields and set columns with data type 'number' are shown as chips in calculation mode. Operators (+, -, *, /, parentheses) are provided as clickable buttons.
+The expression can be:
+- A set column name (simple map): e.g. `to_uom` — directly copies the matched record's column value
+- A formula using `schema` and set columns: e.g. `schema * conversion` — evaluates the expression
 
-The formula has access to two variables:
-- `schema`: the current value of the target schema field in the document
-- `mapset`: the value from the matched set column
+The `schema` keyword refers to the current value of the target schema field in the document. Bare names refer to columns from the matched data map set record.
+
+Expression Builder UI
+The expression is built using clickable chips:
+- Set column chips (amber): one for each column in the rule's data map set, ALL data types shown. Clicking inserts the column name.
+- Schema variable chip (indigo): shows `schema (FieldName)` where FieldName is the selected target schema field. Clicking inserts `schema`.
+- Operator buttons: +, -, *, /, (, )
+- The expression textarea is also directly editable.
 
 Examples:
-- `schema * mapset` — multiply the current schema value by the matched conversion rate
-- `schema / mapset` — divide by the matched rate
-
-This is useful for unit-of-measure conversion (e.g. dozens → units: multiply quantity by 12) or currency conversion (e.g. multiply total by exchange rate).
+- `VendorCode` — simple map: copy VendorCode from matched record
+- `schema * conversion` — multiply the current field value by the matched conversion factor
+- `schema / conversion` — divide by the matched factor
 
 Header vs Table Target Behaviour
-- Header targets: the lookup runs once using the document's header field values. The matched record's column value is written to the specified header field.
-- Table column targets: the lookup runs once per row in the specified table. For each row, the lookup uses that row's column values (e.g. row Description, row UnitPrice) to find a matching record, then writes the target value back into that row. Rows with no matching record are left unchanged.
-
-This enables row-by-row enrichment: for example, iterating over all invoice line items and populating a SKUCode column by matching Description and UnitPrice against a product master data set.
+- Header targets (schema field has no dot): the lookup runs once using the document's header field values. The matched record's value is written to the specified header field.
+- Table column targets (schema field has dot, e.g. "Invoice Items.Quantity"): the lookup runs once per row in the specified table. For each row, the lookup uses that row's column values to find a matching record, then writes the target value back into that row. Rows with no matching record are left unchanged.
 
 A single rule can have both header targets and table column targets. Each block runs independently using the same lookup criteria.
+
+
+---
+
+EXAMPLE: UoM Normalisation
+
+Scenario: Vendor invoices have line items in mixed units (BOX, PCS). The business wants all quantities normalised to PCS before downstream processing.
+
+Data Map Set — "UoM Conversion":
+| from_uom | to_uom | conversion |
+|----------|--------|------------|
+| PCS      | PCS    | 1          |
+| BOX      | PCS    | 10         |
+
+Invoice Extractor Schema — table columns: Item, UoM, Qty, Unit Price, Total
+
+Rule Setup:
+- Rule name: Invoice UoM PCS Normalisation
+- Extractor: Invoice
+- Data Map Set: UoM Conversion
+
+Lookup Criteria:
+  Set column: from_uom ↔ Schema field: Invoice Table.UoM (Exact Match)
+  → Per line item, finds the row where from_uom matches the item's UoM.
+
+Map Targets:
+| Schema field              | Expression           | Effect                                      |
+|---------------------------|----------------------|---------------------------------------------|
+| Invoice Table.UoM         | to_uom               | Maps UoM to target unit (BOX → PCS)         |
+| Invoice Table.Qty         | schema * conversion   | Multiplies quantity by conversion factor     |
+| Invoice Table.Unit Price  | schema / conversion   | Divides unit price by conversion factor      |
+
+How it works in the flow:
+1. Document passes through the Extractor node → extracts line items
+2. Document reaches the Data Mapper node → runs the rule per row:
+   - Line item "Gloves, BOX, 1, 50, 50":
+     Lookup finds from_uom=BOX → to_uom=PCS, conversion=10
+     UoM: BOX → PCS | Qty: 1 * 10 = 10 | Unit Price: 50 / 10 = 5 | Total unchanged: 50
+   - Line item "Pen, PCS, 5, 1, 5":
+     Lookup finds from_uom=PCS → to_uom=PCS, conversion=1
+     UoM: PCS → PCS | Qty: 5 * 1 = 5 | Unit Price: 1 / 1 = 1 | Total unchanged: 5
+3. Enriched document continues downstream with normalised quantities
+
+
+---
 
 Node Usage List
 The rule edit page shows all canvas nodes currently using this rule across all workflows. Clicking an entry navigates directly to that node on the canvas.

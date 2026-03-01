@@ -12,7 +12,17 @@ module.exports = {
   // ── Data Map Sets ─────────────────────────────────────────────────────────
 
   async findSetsByUserId(userId) {
-    return db(SETS).where({ user_id: userId }).orderBy('created_at', 'desc');
+    return db(SETS + ' as s')
+      .where('s.user_id', userId)
+      .leftJoin('users as u', 's.updated_by', 'u.id')
+      .select(
+        's.*',
+        db.raw(`(SELECT COUNT(*) FROM ${RECORDS} WHERE data_map_set_id = s.id)::int AS row_count`),
+        db.raw(`jsonb_array_length(s.headers)::int AS column_count`),
+        db.raw(`(SELECT COUNT(*)::int FROM ${RULES} WHERE data_map_set_id = s.id) AS rule_count`),
+        db.raw(`CONCAT(u.first_name, ' ', u.last_name) AS updated_by_name`)
+      )
+      .orderBy('s.created_at', 'desc');
   },
 
   async findSetById(id, { page = 1, pageSize = 0, filters = {} } = {}) {
@@ -59,7 +69,7 @@ module.exports = {
 
   async createSet({ userId, name, headers, records = [] }) {
     const [set] = await db(SETS)
-      .insert({ user_id: userId, name, headers: JSON.stringify(headers || []) })
+      .insert({ user_id: userId, name, headers: JSON.stringify(headers || []), updated_at: db.fn.now(), updated_by: userId })
       .returning('*');
 
     const recordRows = records.length
@@ -71,7 +81,7 @@ module.exports = {
     return { ...set, records: recordRows };
   },
 
-  async updateSet(id, fields) {
+  async updateSet(id, fields, userId) {
     const allowed = {};
     if (fields.name !== undefined) allowed.name = fields.name;
     // Headers are immutable after creation — only update if explicitly forced
@@ -79,6 +89,8 @@ module.exports = {
       allowed.headers = JSON.stringify(fields.headers);
     }
     if (Object.keys(allowed).length === 0) return this.findSetById(id);
+    allowed.updated_at = db.fn.now();
+    if (userId) allowed.updated_by = userId;
     const [set] = await db(SETS).where({ id }).update(allowed).returning('*');
 
     if (fields.records !== undefined) {
@@ -104,6 +116,11 @@ module.exports = {
     return db(RECORDS)
       .insert(records.map((r) => ({ data_map_set_id: setId, values: JSON.stringify(r) })))
       .returning('*');
+  },
+
+  // Touch set's updated_at/updated_by (called after record mutations)
+  async touchSet(setId, userId) {
+    return db(SETS).where({ id: setId }).update({ updated_at: db.fn.now(), updated_by: userId });
   },
 
   // Find a single record by its primary key
@@ -132,25 +149,23 @@ module.exports = {
 
   // Find which rules reference this set (via lookups or targets)
   async findSetUsage(setId) {
-    const lookupRules = db(LOOKUPS)
-      .where({ data_map_set_id: setId })
-      .select('rule_id')
-      .distinct();
-    const targetRules = db(TARGETS)
-      .where({ data_map_set_id: setId })
-      .select('rule_id')
-      .distinct();
-
     return db(RULES)
-      .whereIn('id', lookupRules)
-      .orWhereIn('id', targetRules)
+      .where({ data_map_set_id: setId })
       .select('id as rule_id', 'name as rule_name');
   },
 
   // ── Data Map Rules ────────────────────────────────────────────────────────
 
   async findRulesByUserId(userId) {
-    return db(RULES).where({ user_id: userId }).orderBy('created_at', 'desc');
+    return db(RULES + ' as r')
+      .where('r.user_id', userId)
+      .leftJoin('users as u', 'r.updated_by', 'u.id')
+      .select(
+        'r.*',
+        db.raw(`(SELECT COUNT(*)::int FROM ${NODES} WHERE node_type = 'DATA_MAPPER' AND config->>'rule_id' = r.id::text) AS node_count`),
+        db.raw(`CONCAT(u.first_name, ' ', u.last_name) AS updated_by_name`)
+      )
+      .orderBy('r.created_at', 'desc');
   },
 
   async findRuleById(id) {
@@ -163,9 +178,16 @@ module.exports = {
     return { ...rule, lookups, targets };
   },
 
-  async createRule({ userId, name, extractorId, lookups = [], targets = [] }) {
+  async createRule({ userId, name, extractorId, dataMapSetId, lookups = [], targets = [] }) {
     const [rule] = await db(RULES)
-      .insert({ user_id: userId, name, extractor_id: extractorId })
+      .insert({
+        user_id: userId,
+        name,
+        extractor_id: extractorId,
+        data_map_set_id: dataMapSetId || null,
+        updated_at: db.fn.now(),
+        updated_by: userId,
+      })
       .returning('*');
 
     const lookupRows = lookups.length
@@ -173,7 +195,6 @@ module.exports = {
           .insert(
             lookups.map((l, i) => ({
               rule_id: rule.id,
-              data_map_set_id: l.data_map_set_id,
               map_set_column: l.map_set_column,
               schema_field: l.schema_field,
               match_type: l.match_type || 'exact',
@@ -189,12 +210,8 @@ module.exports = {
           .insert(
             targets.map((t) => ({
               rule_id: rule.id,
-              target_type: t.target_type,
               schema_field: t.schema_field,
-              data_map_set_id: t.data_map_set_id,
-              map_set_column: t.map_set_column,
-              mode: t.mode || 'map',
-              calculation_expression: t.calculation_expression || null,
+              expression: t.expression || null,
             }))
           )
           .returning('*')
@@ -203,18 +220,17 @@ module.exports = {
     return { ...rule, lookups: lookupRows, targets: targetRows };
   },
 
-  async updateRule(id, fields) {
+  async updateRule(id, fields, userId) {
     const allowed = {};
     if (fields.name !== undefined) allowed.name = fields.name;
     if (fields.extractor_id !== undefined) allowed.extractor_id = fields.extractor_id;
+    if (fields.data_map_set_id !== undefined) allowed.data_map_set_id = fields.data_map_set_id;
+    allowed.updated_at = db.fn.now();
+    if (userId) allowed.updated_by = userId;
 
     let rule;
-    if (Object.keys(allowed).length > 0) {
-      const [row] = await db(RULES).where({ id }).update(allowed).returning('*');
-      rule = row;
-    } else {
-      rule = await db(RULES).where({ id }).first();
-    }
+    const [row] = await db(RULES).where({ id }).update(allowed).returning('*');
+    rule = row;
 
     if (fields.lookups !== undefined) {
       await db(LOOKUPS).where({ rule_id: id }).delete();
@@ -222,7 +238,6 @@ module.exports = {
         await db(LOOKUPS).insert(
           fields.lookups.map((l, i) => ({
             rule_id: id,
-            data_map_set_id: l.data_map_set_id,
             map_set_column: l.map_set_column,
             schema_field: l.schema_field,
             match_type: l.match_type || 'exact',
@@ -239,12 +254,8 @@ module.exports = {
         await db(TARGETS).insert(
           fields.targets.map((t) => ({
             rule_id: id,
-            target_type: t.target_type,
             schema_field: t.schema_field,
-            data_map_set_id: t.data_map_set_id,
-            map_set_column: t.map_set_column,
-            mode: t.mode || 'map',
-            calculation_expression: t.calculation_expression || null,
+            expression: t.expression || null,
           }))
         );
       }

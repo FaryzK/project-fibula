@@ -37,14 +37,22 @@ function getField(metadata, fieldPath) {
 }
 
 /**
- * Evaluate a calculation_expression with schema and mapset context.
- * e.g. "schema * mapset"
- * schema = current schema field value, mapset = matched record column value.
+ * Evaluate a target expression.
+ * - Simple column reference (e.g. "VendorCode") → direct lookup in matched record
+ * - Formula (e.g. "schema * conversion") → VM evaluation with schema + all set columns
+ *
+ * `schema` keyword = current value of the target's schema field in the document.
+ * Bare names = columns from the matched data map set record.
  */
-function evalCalculation(expression, schemaVal, mapsetVal) {
+function evalTarget(expression, schemaVal, matchedRecord) {
+  const trimmed = (expression || '').trim();
+  if (!trimmed) return undefined;
+  // Direct column reference (handles names with spaces too)
+  if (trimmed in matchedRecord) return matchedRecord[trimmed];
+  // Expression evaluation
   try {
-    const context = vm.createContext({ schema: schemaVal, mapset: mapsetVal, Math });
-    return vm.runInContext(expression, context, { timeout: 100 });
+    const context = vm.createContext({ schema: schemaVal, ...matchedRecord, Math });
+    return vm.runInContext(trimmed, context, { timeout: 100 });
   } catch (_) {
     return undefined;
   }
@@ -99,24 +107,19 @@ async function applyRule(rule, metadata) {
     return undefined;
   }
 
-  // Collect distinct set IDs used in lookups
-  const setIds = [...new Set(rule.lookups.map((l) => l.data_map_set_id))];
+  // Use rule-level set
+  const setId = rule.data_map_set_id;
+  if (!setId) return metadata;
 
-  // Build records map: setId → parsed records
-  const recordsBySet = {};
-  for (const setId of setIds) {
-    const rawRecords = await dataMapperModel.findSetRecords(setId);
-    recordsBySet[setId] = rawRecords.map((r) => {
-      const vals = typeof r.values === 'string' ? JSON.parse(r.values) : r.values;
-      return { _id: r.id, _set_id: setId, ...vals };
-    });
-  }
+  const rawRecords = await dataMapperModel.findSetRecords(setId);
+  const allRecords = rawRecords.map((r) => {
+    const vals = typeof r.values === 'string' ? JSON.parse(r.values) : r.values;
+    return { _id: r.id, _set_id: setId, ...vals };
+  });
 
-  const allRecords = recordsBySet[setIds[0]] || [];
-
-  // Separate targets by type
-  const headerTargets = (rule.targets || []).filter((t) => t.target_type !== 'table_column');
-  const tableTargets = (rule.targets || []).filter((t) => t.target_type === 'table_column');
+  // Separate targets: dot in schema_field → table column, else header
+  const headerTargets = (rule.targets || []).filter((t) => !t.schema_field.includes('.'));
+  const tableTargets = (rule.targets || []).filter((t) => t.schema_field.includes('.'));
 
   const enrichedHeader = { ...header };
   const enriched = { ...metadata, header: enrichedHeader };
@@ -127,15 +130,8 @@ async function applyRule(rule, metadata) {
     if (candidates.length > 0) {
       const bestRecord = candidates[0].record;
       for (const target of headerTargets) {
-        const mapsetVal = bestRecord[target.map_set_column];
         const field = target.schema_field;
-        let value;
-        if (target.mode === 'calculation' && target.calculation_expression) {
-          const schemaVal = resolveField(field);
-          value = evalCalculation(target.calculation_expression, schemaVal, mapsetVal);
-        } else {
-          value = mapsetVal;
-        }
+        const value = evalTarget(target.expression, resolveField(field), bestRecord);
         if (field in enrichedHeader) {
           enrichedHeader[field] = value;
         } else {
@@ -183,14 +179,7 @@ async function applyRule(rule, metadata) {
         const bestRecord = candidates[0].record;
         const newRow = { ...row };
         for (const tg of tgts) {
-          const mapsetVal = bestRecord[tg.map_set_column];
-          let value;
-          if (tg.mode === 'calculation' && tg.calculation_expression) {
-            value = evalCalculation(tg.calculation_expression, row[tg._colName], mapsetVal);
-          } else {
-            value = mapsetVal;
-          }
-          newRow[tg._colName] = value;
+          newRow[tg._colName] = evalTarget(tg.expression, row[tg._colName], bestRecord);
         }
         newRows.push(newRow);
       }

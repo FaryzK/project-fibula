@@ -32,16 +32,19 @@ function DataMapSetEdit() {
   const [loading, setLoading] = useState(!isNew);
   const [error, setError] = useState(null);
   const [mode, setMode] = useState('view'); // 'view' | 'edit'
-  const [activeTab, setActiveTab] = useState('data'); // 'data' | 'rules'
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [filters, setFilters] = useState({});
-  const [usage, setUsage] = useState(null);
   const [editingCell, setEditingCell] = useState(null); // {recordId, column}
   const [editValue, setEditValue] = useState('');
   const [saving, setSaving] = useState(false);
   const [nameEdit, setNameEdit] = useState('');
+  const [usage, setUsage] = useState([]);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filterColumn, setFilterColumn] = useState('');
+  const [filterMode, setFilterMode] = useState('exact');
   const bulkFileRef = useRef(null);
+  const filterRef = useRef(null);
 
   // ── Parse headers from uploaded file (client-side preview) ──
   const handleFileSelect = useCallback((e) => {
@@ -124,12 +127,22 @@ function DataMapSetEdit() {
     if (!isNew) loadSet();
   }, [isNew, loadSet]);
 
-  // Load usage lazily when rules tab opened
   useEffect(() => {
-    if (activeTab === 'rules' && usage === null && !isNew) {
-      dataMapperService.getSetUsage(id).then(setUsage).catch(() => setUsage([]));
+    if (!isNew && id) {
+      dataMapperService.getSetUsage(id).then(setUsage).catch(() => {});
     }
-  }, [activeTab, usage, id, isNew]);
+  }, [isNew, id]);
+
+  // ── Click-outside to close filter panel ──
+  useEffect(() => {
+    function handler(e) {
+      if (filterRef.current && !filterRef.current.contains(e.target)) {
+        setFilterOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   // ── Helpers ──
   const headers = set
@@ -255,6 +268,63 @@ function DataMapSetEdit() {
     setPage(1);
   };
 
+  // ── Filter helpers ──
+  const clearColumnFilter = (col) => {
+    setFilters((prev) => {
+      const updated = { ...prev };
+      delete updated[col];
+      return updated;
+    });
+    setPage(1);
+  };
+
+  const toggleFilterPanel = () => {
+    setFilterOpen((v) => {
+      if (!v) {
+        const unfiltered = headerNames.find((h) => !filters[h]);
+        const col = unfiltered || headerNames[0] || '';
+        setFilterColumn(col);
+        // Sync filterMode to existing filter shape
+        syncFilterMode(col);
+      }
+      return !v;
+    });
+  };
+
+  const syncFilterMode = (col) => {
+    if (!col) { setFilterMode('exact'); return; }
+    const dt = getHeaderType(col);
+    const existing = filters[col];
+    if (!existing) { setFilterMode('exact'); return; }
+    if (dt === 'number') {
+      setFilterMode(existing.min !== undefined && existing.max !== undefined && existing.min !== existing.max ? 'range' : 'exact');
+    } else if (dt === 'date') {
+      setFilterMode(existing.from && existing.to && existing.from !== existing.to ? 'range' : 'exact');
+    } else {
+      setFilterMode('exact');
+    }
+  };
+
+  const describeFilter = (col, type, filterObj) => {
+    if (type === 'string' || type === 'currency') return `${col}: "${filterObj.search}"`;
+    if (type === 'boolean') return `${col}: ${filterObj.value}`;
+    if (type === 'number') {
+      if (filterObj.min !== undefined && filterObj.max !== undefined && filterObj.min === filterObj.max) return `${col} = ${filterObj.min}`;
+      const parts = [];
+      if (filterObj.min !== undefined) parts.push(`\u2265 ${filterObj.min}`);
+      if (filterObj.max !== undefined) parts.push(`\u2264 ${filterObj.max}`);
+      return `${col}: ${parts.join(' & ')}`;
+    }
+    if (type === 'date') {
+      if (filterObj.from && filterObj.to && filterObj.from === filterObj.to) return `${col} = ${filterObj.from}`;
+      const parts = [];
+      if (filterObj.from) parts.push(`from ${filterObj.from}`);
+      if (filterObj.to) parts.push(`to ${filterObj.to}`);
+      return `${col}: ${parts.join(' ')}`;
+    }
+    return col;
+  };
+
   // ═══════════════════════════════════════════════════════════════════════════
   // RENDER — NEW SET FLOW
   // ═══════════════════════════════════════════════════════════════════════════
@@ -370,6 +440,7 @@ function DataMapSetEdit() {
 
   const totalPages = pageSize > 0 ? Math.ceil((set.total || 0) / pageSize) : 1;
   const isReferenced = usage && usage.length > 0;
+  const activeFilters = Object.entries(filters).map(([col, f]) => ({ col, type: getHeaderType(col), filterObj: f }));
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-8">
@@ -434,68 +505,199 @@ function DataMapSetEdit() {
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="flex gap-2 mb-4">
-          <button
-            onClick={() => setActiveTab('data')}
-            className={`px-3 py-1.5 text-sm font-medium rounded-lg transition ${
-              activeTab === 'data'
-                ? 'bg-indigo-600 text-white'
-                : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-            }`}
-          >
-            Data
-          </button>
-          <button
-            onClick={() => setActiveTab('rules')}
-            className={`px-3 py-1.5 text-sm font-medium rounded-lg transition ${
-              activeTab === 'rules'
-                ? 'bg-indigo-600 text-white'
-                : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-            }`}
-          >
-            Rules
-          </button>
-        </div>
-
         {error && <p className="text-red-500 text-xs mb-4">{error}</p>}
 
-        {/* Rules tab */}
-        {activeTab === 'rules' && (
-          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-            <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Referencing Rules</h2>
-            {usage === null ? (
-              <p className="text-xs text-gray-400">Loading...</p>
-            ) : usage.length === 0 ? (
-              <p className="text-xs text-gray-400">No rules reference this set.</p>
-            ) : (
-              <ul className="space-y-1">
-                {usage.map((u) => (
-                  <li key={u.rule_id}>
-                    <button
-                      onClick={() => navigate(`/app/data-map-rules/${u.rule_id}`)}
-                      className="text-sm text-indigo-600 hover:underline"
-                    >
-                      {u.rule_name}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
+        {/* Data table */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+            {/* Toolbar row: edit actions + filter */}
+            <div className="flex items-center gap-3 mb-4 flex-wrap">
+              {mode === 'edit' && (
+                <>
+                  <button onClick={addRow} className="text-xs text-indigo-600 hover:underline">+ Add row</button>
+                  <button onClick={() => bulkFileRef.current?.click()} className="text-xs text-indigo-600 hover:underline">+ Bulk add (CSV/JSON)</button>
+                  <input ref={bulkFileRef} type="file" accept=".csv,.json" onChange={handleBulkUpload} className="hidden" />
+                  <div className="w-px h-4 bg-gray-200 dark:bg-gray-600" />
+                </>
+              )}
 
-        {/* Data tab */}
-        {activeTab === 'data' && (
-          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-            {/* Edit mode toolbar */}
-            {mode === 'edit' && (
-              <div className="flex gap-2 mb-4">
-                <button onClick={addRow} className="text-xs text-indigo-600 hover:underline">+ Add row</button>
-                <button onClick={() => bulkFileRef.current?.click()} className="text-xs text-indigo-600 hover:underline">+ Bulk add (CSV/JSON)</button>
-                <input ref={bulkFileRef} type="file" accept=".csv,.json" onChange={handleBulkUpload} className="hidden" />
-              </div>
-            )}
+              {/* Filter button + dropdown */}
+              {headerNames.length > 0 && (
+                <div className="relative" ref={filterRef}>
+                  <button
+                    onClick={toggleFilterPanel}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition ${
+                      activeFilters.length > 0
+                        ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border-indigo-300 dark:border-indigo-600'
+                        : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:border-indigo-400'
+                    }`}
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                    </svg>
+                    Filter
+                    {activeFilters.length > 0 && (
+                      <span className="ml-0.5 bg-indigo-600 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                        {activeFilters.length}
+                      </span>
+                    )}
+                  </button>
+
+                  {/* Filter dropdown panel */}
+                  {filterOpen && (
+                    <div className="absolute z-20 left-0 top-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-4 min-w-[280px]">
+                      <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Column</label>
+                      <select
+                        value={filterColumn}
+                        onChange={(e) => { setFilterColumn(e.target.value); syncFilterMode(e.target.value); }}
+                        className="w-full border border-gray-200 dark:border-gray-600 rounded px-2 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white mb-3"
+                      >
+                        {headerNames.map((h) => (
+                          <option key={h} value={h}>{h} ({getHeaderType(h)})</option>
+                        ))}
+                      </select>
+
+                      {/* String / Currency */}
+                      {filterColumn && (getHeaderType(filterColumn) === 'string' || getHeaderType(filterColumn) === 'currency') && (
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Search</label>
+                          <input
+                            type="text"
+                            placeholder="Search..."
+                            value={filters[filterColumn]?.search || ''}
+                            onChange={(e) => updateFilter(filterColumn, 'search', e.target.value)}
+                            className="w-full border border-gray-200 dark:border-gray-600 rounded px-2 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                            autoFocus
+                          />
+                        </div>
+                      )}
+
+                      {/* Boolean */}
+                      {filterColumn && getHeaderType(filterColumn) === 'boolean' && (
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Value</label>
+                          <select
+                            value={filters[filterColumn]?.value ?? ''}
+                            onChange={(e) => updateFilter(filterColumn, 'value', e.target.value === '' ? undefined : e.target.value)}
+                            className="w-full border border-gray-200 dark:border-gray-600 rounded px-2 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                          >
+                            <option value="">All</option>
+                            <option value="true">true</option>
+                            <option value="false">false</option>
+                          </select>
+                        </div>
+                      )}
+
+                      {/* Number */}
+                      {filterColumn && getHeaderType(filterColumn) === 'number' && (
+                        <div>
+                          <div className="flex gap-1 mb-2">
+                            <button
+                              onClick={() => { setFilterMode('exact'); updateFilter(filterColumn, 'min', undefined); updateFilter(filterColumn, 'max', undefined); }}
+                              className={`text-xs px-2 py-1 rounded ${filterMode === 'exact' ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-medium' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+                            >
+                              Value
+                            </button>
+                            <button
+                              onClick={() => { setFilterMode('range'); updateFilter(filterColumn, 'min', undefined); updateFilter(filterColumn, 'max', undefined); }}
+                              className={`text-xs px-2 py-1 rounded ${filterMode === 'range' ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-medium' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+                            >
+                              Range
+                            </button>
+                          </div>
+                          {filterMode === 'exact' ? (
+                            <input
+                              type="number"
+                              placeholder="Value"
+                              value={filters[filterColumn]?.min ?? ''}
+                              onChange={(e) => { const v = e.target.value ? Number(e.target.value) : undefined; updateFilter(filterColumn, 'min', v); updateFilter(filterColumn, 'max', v); }}
+                              className="w-full border border-gray-200 dark:border-gray-600 rounded px-2 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                              autoFocus
+                            />
+                          ) : (
+                            <div className="flex gap-2">
+                              <input
+                                type="number"
+                                placeholder="Min"
+                                value={filters[filterColumn]?.min ?? ''}
+                                onChange={(e) => updateFilter(filterColumn, 'min', e.target.value ? Number(e.target.value) : undefined)}
+                                className="w-1/2 border border-gray-200 dark:border-gray-600 rounded px-2 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                              />
+                              <input
+                                type="number"
+                                placeholder="Max"
+                                value={filters[filterColumn]?.max ?? ''}
+                                onChange={(e) => updateFilter(filterColumn, 'max', e.target.value ? Number(e.target.value) : undefined)}
+                                className="w-1/2 border border-gray-200 dark:border-gray-600 rounded px-2 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Date */}
+                      {filterColumn && getHeaderType(filterColumn) === 'date' && (
+                        <div>
+                          <div className="flex gap-1 mb-2">
+                            <button
+                              onClick={() => { setFilterMode('exact'); updateFilter(filterColumn, 'from', undefined); updateFilter(filterColumn, 'to', undefined); }}
+                              className={`text-xs px-2 py-1 rounded ${filterMode === 'exact' ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-medium' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+                            >
+                              Value
+                            </button>
+                            <button
+                              onClick={() => { setFilterMode('range'); updateFilter(filterColumn, 'from', undefined); updateFilter(filterColumn, 'to', undefined); }}
+                              className={`text-xs px-2 py-1 rounded ${filterMode === 'range' ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-medium' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+                            >
+                              Range
+                            </button>
+                          </div>
+                          {filterMode === 'exact' ? (
+                            <input
+                              type="date"
+                              value={filters[filterColumn]?.from || ''}
+                              onChange={(e) => { const v = e.target.value || undefined; updateFilter(filterColumn, 'from', v); updateFilter(filterColumn, 'to', v); }}
+                              className="w-full border border-gray-200 dark:border-gray-600 rounded px-2 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                            />
+                          ) : (
+                            <div className="flex gap-2">
+                              <input
+                                type="date"
+                                value={filters[filterColumn]?.from || ''}
+                                onChange={(e) => updateFilter(filterColumn, 'from', e.target.value || undefined)}
+                                className="w-1/2 border border-gray-200 dark:border-gray-600 rounded px-2 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                              />
+                              <input
+                                type="date"
+                                value={filters[filterColumn]?.to || ''}
+                                onChange={(e) => updateFilter(filterColumn, 'to', e.target.value || undefined)}
+                                className="w-1/2 border border-gray-200 dark:border-gray-600 rounded px-2 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Active filter chips */}
+              {activeFilters.map(({ col, type, filterObj }) => (
+                <span
+                  key={col}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-700"
+                >
+                  {describeFilter(col, type, filterObj)}
+                  <button onClick={() => clearColumnFilter(col)} className="ml-0.5 text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-200">&times;</button>
+                </span>
+              ))}
+
+              {activeFilters.length >= 2 && (
+                <button onClick={() => { setFilters({}); setPage(1); }} className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                  Clear all
+                </button>
+              )}
+            </div>
 
             {/* Data table */}
             <div className="overflow-x-auto">
@@ -506,70 +708,6 @@ function DataMapSetEdit() {
                       <th key={h} className="text-left px-2 py-1 font-medium text-gray-500 dark:text-gray-400">{h}</th>
                     ))}
                     {mode === 'edit' && <th className="w-8" />}
-                  </tr>
-                  {/* Filter inputs */}
-                  <tr className="border-b border-gray-100 dark:border-gray-700">
-                    {headerNames.map((h) => {
-                      const dt = getHeaderType(h);
-                      return (
-                        <th key={h} className="px-2 py-1">
-                          {(dt === 'string' || dt === 'currency') && (
-                            <input
-                              placeholder="Search..."
-                              value={filters[h]?.search || ''}
-                              onChange={(e) => updateFilter(h, 'search', e.target.value)}
-                              className="w-full border border-gray-200 dark:border-gray-600 rounded px-1.5 py-0.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-normal"
-                            />
-                          )}
-                          {dt === 'number' && (
-                            <div className="flex gap-1">
-                              <input
-                                type="number"
-                                placeholder="Min"
-                                value={filters[h]?.min ?? ''}
-                                onChange={(e) => updateFilter(h, 'min', e.target.value ? Number(e.target.value) : undefined)}
-                                className="w-1/2 border border-gray-200 dark:border-gray-600 rounded px-1 py-0.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-normal"
-                              />
-                              <input
-                                type="number"
-                                placeholder="Max"
-                                value={filters[h]?.max ?? ''}
-                                onChange={(e) => updateFilter(h, 'max', e.target.value ? Number(e.target.value) : undefined)}
-                                className="w-1/2 border border-gray-200 dark:border-gray-600 rounded px-1 py-0.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-normal"
-                              />
-                            </div>
-                          )}
-                          {dt === 'date' && (
-                            <div className="flex gap-1">
-                              <input
-                                type="date"
-                                value={filters[h]?.from || ''}
-                                onChange={(e) => updateFilter(h, 'from', e.target.value)}
-                                className="w-1/2 border border-gray-200 dark:border-gray-600 rounded px-1 py-0.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-normal"
-                              />
-                              <input
-                                type="date"
-                                value={filters[h]?.to || ''}
-                                onChange={(e) => updateFilter(h, 'to', e.target.value)}
-                                className="w-1/2 border border-gray-200 dark:border-gray-600 rounded px-1 py-0.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-normal"
-                              />
-                            </div>
-                          )}
-                          {dt === 'boolean' && (
-                            <select
-                              value={filters[h]?.value ?? ''}
-                              onChange={(e) => updateFilter(h, 'value', e.target.value === '' ? undefined : e.target.value)}
-                              className="w-full border border-gray-200 dark:border-gray-600 rounded px-1 py-0.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-normal"
-                            >
-                              <option value="">All</option>
-                              <option value="true">true</option>
-                              <option value="false">false</option>
-                            </select>
-                          )}
-                        </th>
-                      );
-                    })}
-                    {mode === 'edit' && <th />}
                   </tr>
                 </thead>
                 <tbody>
@@ -593,9 +731,9 @@ function DataMapSetEdit() {
                               ) : (
                                 <span
                                   onClick={mode === 'edit' ? () => startEdit(rec.id, h, vals[h]) : undefined}
-                                  className={`block truncate ${mode === 'edit' ? 'cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded px-1' : ''} text-gray-700 dark:text-gray-300`}
+                                  className={`block truncate min-h-[1.5em] ${mode === 'edit' ? 'cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded px-1' : ''} text-gray-700 dark:text-gray-300`}
                                 >
-                                  {vals[h] !== null && vals[h] !== undefined ? String(vals[h]) : ''}
+                                  {vals[h] !== null && vals[h] !== undefined && String(vals[h]) !== '' ? String(vals[h]) : (mode === 'edit' ? '\u00A0' : '')}
                                 </span>
                               )}
                             </td>
@@ -648,8 +786,7 @@ function DataMapSetEdit() {
                 </button>
               </div>
             </div>
-          </div>
-        )}
+        </div>
       </div>
     </div>
   );

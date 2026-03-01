@@ -17,20 +17,20 @@ const { applyRule } = require('../../src/services/dataMapper.service');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function makeRule({ lookups = [], targets = [] } = {}) {
-  return { id: 'rule-1', name: 'Test Rule', extractor_id: 'ext-1', lookups, targets };
+function makeRule({ lookups = [], targets = [], dataMapSetId = 'set-1' } = {}) {
+  return { id: 'rule-1', name: 'Test Rule', extractor_id: 'ext-1', data_map_set_id: dataMapSetId, lookups, targets };
 }
 
 function makeTableLookup(schemaField, mapSetColumn, matchType = 'exact') {
-  return { data_map_set_id: 'set-1', map_set_column: mapSetColumn, schema_field: schemaField, match_type: matchType, match_threshold: 0.8, sort_order: 0 };
+  return { map_set_column: mapSetColumn, schema_field: schemaField, match_type: matchType, match_threshold: 0.8, sort_order: 0 };
 }
 
-function makeTableTarget(schemaField, mapSetColumn, mode = 'map', calcExpr = null) {
-  return { target_type: 'table_column', schema_field: schemaField, data_map_set_id: 'set-1', map_set_column: mapSetColumn, mode, calculation_expression: calcExpr };
+function makeTableTarget(schemaField, expression) {
+  return { schema_field: schemaField, expression };
 }
 
-function makeHeaderTarget(schemaField, mapSetColumn, mode = 'map') {
-  return { target_type: 'header', schema_field: schemaField, data_map_set_id: 'set-1', map_set_column: mapSetColumn, mode };
+function makeHeaderTarget(schemaField, expression) {
+  return { schema_field: schemaField, expression };
 }
 
 function makeSetRecords(records) {
@@ -91,10 +91,10 @@ describe('applyRule — table-level enrichment', () => {
     expect(result.tables['Invoice Items'][1].SKUCode).toBeNull(); // unchanged
   });
 
-  it('applies calculation mode per row (Quantity * Conversion = TotalUnits)', async () => {
+  it('applies expression per row (schema * Conversion)', async () => {
     const rule = makeRule({
       lookups: [makeTableLookup('Invoice Items.UoM', 'UoM_initial')],
-      targets: [makeTableTarget('Invoice Items.TotalUnits', 'Conversion', 'calculation', 'schema * mapset')],
+      targets: [makeTableTarget('Invoice Items.TotalUnits', 'schema * Conversion')],
     });
     dataMapperModel.findSetRecords.mockResolvedValue(makeSetRecords([
       { UoM_initial: 'dozen', Conversion: 12 },
@@ -111,18 +111,15 @@ describe('applyRule — table-level enrichment', () => {
     };
 
     const result = await applyRule(rule, metadata);
-    // TotalUnits target schema_field = 'Invoice Items.TotalUnits', so schemaVal = row.TotalUnits = null
-    // calculation: schema * mapset = null * 12 = 0 (or NaN → but evalCalculation returns undefined if NaN)
-    // More useful: let's test that schemaVal uses the row's quantity, not TotalUnits
-    // Actually the calculation expression references the TARGET field's current row value as schema.
-    // For a more meaningful test: use Quantity as the target schema_field
+    // TotalUnits = null, schema * Conversion = null * 12 = 0
+    // schema refers to the target field's current value (TotalUnits = null)
     expect(result.tables['Invoice Items']).toBeDefined();
   });
 
-  it('calculation mode uses row column value as schema (Quantity * Conversion)', async () => {
+  it('expression uses row column value as schema (Quantity * Conversion)', async () => {
     const rule = makeRule({
       lookups: [makeTableLookup('Invoice Items.UoM', 'UoM_initial')],
-      targets: [makeTableTarget('Invoice Items.Quantity', 'Conversion', 'calculation', 'schema * mapset')],
+      targets: [makeTableTarget('Invoice Items.Quantity', 'schema * Conversion')],
     });
     dataMapperModel.findSetRecords.mockResolvedValue(makeSetRecords([
       { UoM_initial: 'dozen', Conversion: 12 },
@@ -139,7 +136,7 @@ describe('applyRule — table-level enrichment', () => {
     };
 
     const result = await applyRule(rule, metadata);
-    // schemaVal = row.Quantity, mapsetVal = record.Conversion = 12
+    // schema = row.Quantity, Conversion = 12 from matched record
     // result = 5 * 12 = 60 for first row, 3 * 12 = 36 for second
     expect(result.tables['Invoice Items'][0].Quantity).toBe(60);
     expect(result.tables['Invoice Items'][1].Quantity).toBe(36);
@@ -148,7 +145,7 @@ describe('applyRule — table-level enrichment', () => {
   it('enriches both header target and table target in same rule', async () => {
     // Use a header-field lookup so both header block and table block can evaluate it.
     // The table block also falls back to header fields via resolveRowField.
-    const headerLookup = { data_map_set_id: 'set-1', map_set_column: 'VendorName', schema_field: 'VendorName', match_type: 'exact', match_threshold: 0.8, sort_order: 0 };
+    const headerLookup = { map_set_column: 'VendorName', schema_field: 'VendorName', match_type: 'exact', match_threshold: 0.8, sort_order: 0 };
     const rule = makeRule({
       lookups: [headerLookup],
       targets: [

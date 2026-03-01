@@ -46,6 +46,7 @@ const dataMapperService = {
   createRule: (payload) => api.post('/data-map-rules', payload).then((r) => r.data),
   getRule: (id) => api.get(`/data-map-rules/${id}`).then((r) => r.data),
   updateRule: (id, payload) => api.patch(`/data-map-rules/${id}`, payload).then((r) => r.data),
+  getRuleUsage: (id) => api.get(`/data-map-rules/${id}/usage`).then((r) => r.data),
   removeRule: (id) => api.delete(`/data-map-rules/${id}`),
 };
 

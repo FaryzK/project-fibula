@@ -30,6 +30,7 @@ rulesRouter.use(withAuth);
 rulesRouter.get('/', controller.listRules);
 rulesRouter.post('/', controller.createRule);
 rulesRouter.get('/:id', controller.getRule);
+rulesRouter.get('/:id/usage', controller.getRuleUsage);
 rulesRouter.patch('/:id', controller.updateRule);
 rulesRouter.delete('/:id', controller.removeRule);
 

@@ -38,6 +38,12 @@ const FAKE_SET = {
   total: 1,
   page: 1,
   pageSize: 0,
+  updated_at: '2026-03-01T00:00:00.000Z',
+  updated_by: 'db-uuid-1',
+  row_count: 1,
+  column_count: 2,
+  rule_count: 0,
+  updated_by_name: 'Test User',
 };
 
 const FAKE_RULE = {
@@ -45,12 +51,17 @@ const FAKE_RULE = {
   user_id: 'db-uuid-1',
   name: 'Vendor Code Lookup',
   extractor_id: 'ext-1',
+  data_map_set_id: 'set-1',
   lookups: [
-    { id: 'lk-1', rule_id: 'rule-1', data_map_set_id: 'set-1', map_set_column: 'VendorName', schema_field: 'vendor_name', match_type: 'fuzzy', match_threshold: 0.8, sort_order: 0 },
+    { id: 'lk-1', rule_id: 'rule-1', map_set_column: 'VendorName', schema_field: 'vendor_name', match_type: 'fuzzy', match_threshold: 0.8, sort_order: 0 },
   ],
   targets: [
-    { id: 'tg-1', rule_id: 'rule-1', target_type: 'header', schema_field: 'vendor_code', map_set_column: 'VendorCode', mode: 'map' },
+    { id: 'tg-1', rule_id: 'rule-1', schema_field: 'vendor_code', expression: 'VendorCode' },
   ],
+  updated_at: '2026-03-01T00:00:00.000Z',
+  updated_by: 'db-uuid-1',
+  node_count: 0,
+  updated_by_name: 'Test User',
 };
 
 function authHeaders() {
@@ -61,6 +72,9 @@ beforeEach(() => {
   jest.clearAllMocks();
   supabase.auth.getUser.mockResolvedValue({ data: { user: FAKE_USER }, error: null });
   userModel.findBySupabaseId.mockResolvedValue(FAKE_DB_USER);
+  // Default mock for touchSet (called by record mutation handlers)
+  dataMapperModel.touchSet = dataMapperModel.touchSet || jest.fn();
+  dataMapperModel.touchSet.mockResolvedValue();
 });
 
 describe('Data Map Set routes', () => {
@@ -407,7 +421,7 @@ describe('Data Map Rule routes', () => {
       const res = await request(app)
         .post('/api/data-map-rules')
         .set(authHeaders())
-        .send({ name: 'Vendor Code Lookup', extractor_id: 'ext-1', lookups: [], targets: [] });
+        .send({ name: 'Vendor Code Lookup', extractor_id: 'ext-1', data_map_set_id: 'set-1', lookups: [], targets: [] });
       expect(res.statusCode).toBe(201);
       expect(res.body.name).toBe('Vendor Code Lookup');
     });
@@ -434,6 +448,26 @@ describe('Data Map Rule routes', () => {
     it('returns 404 when not found', async () => {
       dataMapperModel.findRuleById.mockResolvedValue(null);
       const res = await request(app).get('/api/data-map-rules/missing').set(authHeaders());
+      expect(res.statusCode).toBe(404);
+    });
+  });
+
+  describe('GET /api/data-map-rules/:id/usage', () => {
+    it('returns workflow nodes using this rule', async () => {
+      dataMapperModel.findRuleById.mockResolvedValue(FAKE_RULE);
+      dataMapperModel.findRuleUsage.mockResolvedValue([
+        { workflow_id: 'wf-1', workflow_name: 'My Workflow', node_id: 'n-1', node_name: 'DM Node' },
+      ]);
+      const res = await request(app).get('/api/data-map-rules/rule-1/usage').set(authHeaders());
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toHaveLength(1);
+      expect(res.body[0].workflow_name).toBe('My Workflow');
+      expect(res.body[0].node_name).toBe('DM Node');
+    });
+
+    it('returns 404 for unknown rule', async () => {
+      dataMapperModel.findRuleById.mockResolvedValue(null);
+      const res = await request(app).get('/api/data-map-rules/missing/usage').set(authHeaders());
       expect(res.statusCode).toBe(404);
     });
   });
