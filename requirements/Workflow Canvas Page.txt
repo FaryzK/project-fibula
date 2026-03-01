@@ -120,15 +120,11 @@ EXECUTION MODEL
 Edge routing rules per output port:
 - 0 edges → document is marked unrouted (status=unrouted). Visible in Flow Inspector's Unrouted tab and the Reconciliation page's Unrouted tab.
 - 1 edge → same document_execution row continues downstream (most common case).
-- 2+ edges → one independent child document is created per branch. The source file is copied in storage and a new documents row is created for each branch (new document_id, new file URL). The branch file name encodes its position: invoice.pdf → invoice(1).pdf, invoice(2).pdf. Each child exec references the source via parent_document_execution_id. The parent exec is marked completed. Children run sequentially to preserve reconciliation ordering.
+- 2+ edges → one independent child document is created per branch. The source file is copied in storage and a new documents row is created for each branch (new document_id, new file URL). The branch file name encodes its position: invoice.pdf → invoice(1).pdf, invoice(2).pdf. Each child exec references the source via parent_document_execution_id. The parent exec is marked completed.
 
-Document splitting fanout (SPLITTING node) works the same way at the storage level — it also creates new document records with new file URLs, one per sub-document — but the motivation and content differ. Multi-edge fan-out produces identical copies of the source file, one per branch edge (topology-driven). SPLITTING produces distinct sub-documents with different content (e.g. different page ranges), extracted from the source by the splitting instruction (instruction-driven). Both fanout children are run sequentially to prevent TOCTOU races when sub-documents converge at a reconciliation node.
+Document splitting fanout (SPLITTING node) works the same way at the storage level — it also creates new document records with new file URLs, one per sub-document — but the motivation and content differ. Multi-edge fan-out produces identical copies of the source file, one per branch edge (topology-driven). SPLITTING produces distinct sub-documents with different content (e.g. different page ranges), extracted from the source by the splitting instruction (instruction-driven).
 
-Documents are processed sequentially in the outer execution loop. This prevents race conditions in the reconciliation node, which needs to check whether sibling documents have all reached held state before releasing them.
-
-In a published workflow, each document upload creates its own workflow run and is fully independent. Race conditions do not apply in this case because each run has exactly one document in its execution queue at the start.
-
-The sequential outer loop only matters when multiple documents are uploaded together in a single manual run.
+All documents are processed in parallel in the execution loop — both initial trigger-path documents and fanout siblings from splitting nodes. Concurrency safety at the reconciliation node is handled by the reconciliation service itself using a per-rule async mutex. Only one document at a time can process matching-set creation and backfill for a given rule, preventing TOCTOU races where two concurrent docs miss each other. Different rules are processed independently in parallel.
 
 On server startup, any document_executions left in 'processing' status and any workflow_runs left in 'running' status from a previous server session are automatically marked as 'failed'. This handles the case where the server was restarted or crashed mid-execution, preventing ghost documents from appearing in the Flow Inspector or canvas status badges.
 
