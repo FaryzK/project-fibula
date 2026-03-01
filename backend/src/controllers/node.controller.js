@@ -43,17 +43,47 @@ async function update(req, res, next) {
       }
     }
 
-    // When a RECONCILIATION node's slots change, orphan held docs for changed/removed slots
+    // When a RECONCILIATION node's slots change, orphan held and unrouted docs for changed/removed slots
     if (req.body.config && req.body.config.recon_inputs !== undefined && currentNode && currentNode.node_type === 'RECONCILIATION') {
       const oldSlots = (currentNode.config && currentNode.config.recon_inputs) || [];
       const newSlots = req.body.config.recon_inputs || [];
       for (const oldSlot of oldSlots) {
-        if (!oldSlot.extractor_id || !oldSlot.id) continue;
+        if (!oldSlot.id) continue;
         const newSlot = newSlots.find((s) => s.id === oldSlot.id);
         const wasRemoved = !newSlot;
         const extractorChanged = newSlot && newSlot.extractor_id !== oldSlot.extractor_id;
         if (wasRemoved || extractorChanged) {
-          await reconciliationModel.orphanReconSlotDocs(req.params.nodeId, oldSlot.id, currentNode.name);
+          if (oldSlot.extractor_id) {
+            await reconciliationModel.orphanReconSlotDocs(req.params.nodeId, oldSlot.id, currentNode.name);
+          }
+          // Orphan unrouted docs that exited through this slot's output port
+          await documentExecutionModel.orphanUnroutedDocs(req.params.nodeId, currentNode.name, oldSlot.id);
+        }
+      }
+    }
+
+    // When a CATEGORISATION node's labels change, orphan unrouted docs for removed label ports
+    if (req.body.config && req.body.config.categorisation_labels !== undefined && currentNode && currentNode.node_type === 'CATEGORISATION') {
+      const oldLabels = (currentNode.config && currentNode.config.categorisation_labels) || [];
+      const newLabels = req.body.config.categorisation_labels || [];
+      const newLabelSet = new Set(newLabels);
+      for (const oldLabel of oldLabels) {
+        if (!newLabelSet.has(oldLabel)) {
+          // Port ID for CATEGORISATION is the label string itself
+          await documentExecutionModel.orphanUnroutedDocs(req.params.nodeId, currentNode.name, oldLabel);
+        }
+      }
+    }
+
+    // When a SWITCH node's cases change, orphan unrouted docs for removed case ports
+    if (req.body.config && req.body.config.cases !== undefined && currentNode && currentNode.node_type === 'SWITCH') {
+      const oldCases = (currentNode.config && currentNode.config.cases) || [];
+      const newCases = req.body.config.cases || [];
+      const newCaseIds = new Set(newCases.map((c) => c.id));
+      for (const oldCase of oldCases) {
+        if (oldCase.id && !newCaseIds.has(oldCase.id)) {
+          // Port ID for SWITCH is the case.id
+          await documentExecutionModel.orphanUnroutedDocs(req.params.nodeId, currentNode.name, oldCase.id);
         }
       }
     }
@@ -64,23 +94,30 @@ async function update(req, res, next) {
 }
 
 // DELETE /api/workflows/:workflowId/nodes/:nodeId
-// Without ?force=true: returns 409 if the node has held documents (frontend shows warning).
-// With ?force=true: orphans held documents then deletes the node.
+// Without ?force=true: returns 409 if the node has held or unrouted documents (frontend shows warning).
+// With ?force=true: orphans held and unrouted documents then deletes the node.
 async function remove(req, res, next) {
   try {
     const { nodeId } = req.params;
     const force = req.query.force === 'true';
 
-    const heldCount = await documentExecutionModel.countHeldAtNode(nodeId);
+    const [heldCount, unroutedCount] = await Promise.all([
+      documentExecutionModel.countHeldAtNode(nodeId),
+      documentExecutionModel.countUnroutedAtNode(nodeId),
+    ]);
 
-    if (heldCount > 0 && !force) {
-      return res.status(409).json({ heldCount });
+    if ((heldCount > 0 || unroutedCount > 0) && !force) {
+      return res.status(409).json({ heldCount, unroutedCount });
     }
 
     const node = await nodeModel.findById(nodeId);
+    const nodeName = node?.name || 'Deleted node';
 
     if (heldCount > 0) {
-      await documentExecutionModel.orphanHeldDocs(nodeId, node?.name || 'Deleted node');
+      await documentExecutionModel.orphanHeldDocs(nodeId, nodeName);
+    }
+    if (unroutedCount > 0) {
+      await documentExecutionModel.orphanUnroutedDocs(nodeId, nodeName);
     }
 
     // For RECONCILIATION nodes, also clean up the recon data pool and matching sets

@@ -5,10 +5,15 @@ export default {
     return api.get(`/workflows/${workflowId}/flow-inspector/summary`);
   },
 
-  getNodeDocuments(workflowId, nodeId, tab) {
-    return api.get(`/workflows/${workflowId}/flow-inspector/nodes/${nodeId}/documents`, {
-      params: { tab },
-    });
+  getNodeDocuments(workflowId, nodeId, tab, port = null) {
+    const params = { tab };
+    if (tab === 'unrouted' && port) params.port = port;
+    return api.get(`/workflows/${workflowId}/flow-inspector/nodes/${nodeId}/documents`, { params });
+  },
+
+  getUnroutedCount(workflowId, nodeId, port = null) {
+    const params = port ? { port } : {};
+    return api.get(`/workflows/${workflowId}/flow-inspector/nodes/${nodeId}/unrouted-count`, { params });
   },
 
   getOrphaned(workflowId) {
@@ -23,6 +28,14 @@ export default {
     return api.post(`/workflows/${workflowId}/flow-inspector/retrigger`, {
       execIds,
       triggerNodeIds,
+    });
+  },
+
+  sendOut(workflowId, execIds, nodeId, portId) {
+    return api.post(`/workflows/${workflowId}/flow-inspector/send-out`, {
+      execIds,
+      nodeId,
+      portId,
     });
   },
 };

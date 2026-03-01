@@ -382,4 +382,14 @@ module.exports = {
       next(err);
     }
   },
+
+  // GET /reconciliation-rules/unrouted
+  async listUnroutedDocs(req, res, next) {
+    try {
+      const docs = await documentExecutionModel.listUnroutedDocs(req.dbUser.id);
+      return res.json(docs);
+    } catch (err) {
+      next(err);
+    }
+  },
 };

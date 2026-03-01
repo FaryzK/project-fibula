@@ -10,6 +10,7 @@ router.get('/', controller.list);
 router.post('/', controller.create);
 // Specific routes before /:id to avoid param conflicts
 router.get('/slots/held-count', controller.countHeldAtSlot);
+router.get('/unrouted', controller.listUnroutedDocs);
 router.get('/documents', controller.listHeldDocs);
 router.post('/documents/:heldDocId/reject', controller.rejectDoc);
 router.delete('/documents/:heldDocId', controller.deleteDoc);

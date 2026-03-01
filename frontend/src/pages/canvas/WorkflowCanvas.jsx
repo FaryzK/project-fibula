@@ -126,8 +126,8 @@ function CanvasInner() {
     if ((e.key === 'Delete' || e.key === 'Backspace') && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
       for (const n of nodes.filter((node) => node.selected)) {
         const result = await deleteNode(n.id);
-        if (result?.heldCount) {
-          setDeleteWarning({ nodeId: n.id, heldCount: result.heldCount });
+        if (result?.heldCount > 0 || result?.unroutedCount > 0) {
+          setDeleteWarning({ nodeId: n.id, heldCount: result.heldCount || 0, unroutedCount: result.unroutedCount || 0 });
           return;
         }
       }
@@ -346,13 +346,16 @@ function CanvasInner() {
             <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Delete node</h2>
           </div>
           <div className="px-5 py-4 text-sm text-gray-700 dark:text-gray-300 space-y-2">
-            <p>
-              This node has <strong>{deleteWarning.heldCount}</strong> held document{deleteWarning.heldCount !== 1 ? 's' : ''}.
-            </p>
+            {deleteWarning.heldCount > 0 && (
+              <p>This node has <strong>{deleteWarning.heldCount}</strong> held document{deleteWarning.heldCount !== 1 ? 's' : ''}.</p>
+            )}
+            {deleteWarning.unroutedCount > 0 && (
+              <p>This node has <strong>{deleteWarning.unroutedCount}</strong> unrouted document{deleteWarning.unroutedCount !== 1 ? 's' : ''}.</p>
+            )}
             <p>
               Processing documents will be allowed to complete naturally. If they later reach the deleted node, they will fail and appear in the Failed tab of the orphaned section.
             </p>
-            <p>If you proceed, all held documents will be moved to Orphaned Documents.</p>
+            <p>If you proceed, all held and unrouted documents will be moved to Orphaned Documents.</p>
           </div>
           <div className="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
             <button

@@ -77,7 +77,7 @@ function MatchingSetsPill({ sets, docExecId }) {
 }
 
 function ReconciliationTab() {
-  const [tab, setTab] = useState('anchor'); // 'anchor' | 'held' | 'pool'
+  const [tab, setTab] = useState('anchor'); // 'anchor' | 'held' | 'pool' | 'unrouted'
   const [selectedRule, setSelectedRule] = useState(null); // null = rule list, rule obj = anchor docs
   const [anchorDocs, setAnchorDocs] = useState([]);
   const [anchorLoading, setAnchorLoading] = useState(false);
@@ -85,6 +85,8 @@ function ReconciliationTab() {
   const [heldLoading, setHeldLoading] = useState(false);
   const [poolDocs, setPoolDocs] = useState([]);
   const [poolLoading, setPoolLoading] = useState(false);
+  const [unroutedDocs, setUnroutedDocs] = useState([]);
+  const [unroutedLoading, setUnroutedLoading] = useState(false);
 
   const { rules, loading: rulesLoading, loadRules } = useReconciliationStore();
   const navigate = useNavigate();
@@ -119,6 +121,16 @@ function ReconciliationTab() {
       .then((data) => setPoolDocs(data))
       .catch(() => setPoolDocs([]))
       .finally(() => setPoolLoading(false));
+  }, [tab]);
+
+  // Load unrouted docs when Unrouted tab selected
+  useEffect(() => {
+    if (tab !== 'unrouted') return;
+    setUnroutedLoading(true);
+    reconciliationService.listUnroutedDocs()
+      .then((data) => setUnroutedDocs(data))
+      .catch(() => setUnroutedDocs([]))
+      .finally(() => setUnroutedLoading(false));
   }, [tab]);
 
   function handleDeletePoolDoc(docId) {
@@ -174,6 +186,16 @@ function ReconciliationTab() {
             }`}
           >
             Data Pool
+          </button>
+          <button
+            onClick={() => setTab('unrouted')}
+            className={`px-3 py-1.5 text-sm font-medium rounded-lg transition ${
+              tab === 'unrouted'
+                ? 'bg-indigo-600 text-white'
+                : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+            }`}
+          >
+            Unrouted
           </button>
         </div>
         <button
@@ -288,6 +310,21 @@ function ReconciliationTab() {
           )}
         </div>
       )}
+
+      {/* ── Unrouted tab ── */}
+      {tab === 'unrouted' && (
+        <div>
+          {unroutedLoading ? (
+            <div className="text-gray-400 text-sm">Loading…</div>
+          ) : unroutedDocs.length === 0 ? (
+            <p className="text-gray-400 dark:text-gray-500 text-sm">
+              No unrouted documents. Documents appear here when a node's output port has no connected edge.
+            </p>
+          ) : (
+            <UnroutedTable docs={unroutedDocs} navigate={navigate} />
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -367,6 +404,64 @@ function DocsTable({ docs, showStatus, navigate, onDelete }) {
                   </button>
                 </td>
               )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function unroutedDisplayName(doc) {
+  try {
+    const meta = typeof doc.metadata === 'string' ? JSON.parse(doc.metadata) : (doc.metadata || {});
+    // Legacy: old records stored _branch_index in metadata instead of the file name
+    const legacyIdx = meta._branch_index;
+    if (legacyIdx == null || !doc.file_name) return doc.file_name || '—';
+    const lastDot = doc.file_name.lastIndexOf('.');
+    if (lastDot === -1) return `${doc.file_name}(${legacyIdx})`;
+    return `${doc.file_name.slice(0, lastDot)}(${legacyIdx})${doc.file_name.slice(lastDot)}`;
+  } catch (_) {
+    return doc.file_name || '—';
+  }
+}
+
+function UnroutedTable({ docs, navigate }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-xs text-gray-500 dark:text-gray-400 text-left border-b border-gray-200 dark:border-gray-700">
+            <th className="pb-2 pr-4 font-medium">Document</th>
+            <th className="pb-2 pr-4 font-medium">Stopped At</th>
+            <th className="pb-2 pr-4 font-medium">Port</th>
+            <th className="pb-2 pr-4 font-medium">Workflow</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+          {docs.map((doc) => (
+            <tr key={doc.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30 transition">
+              <td className="py-2 pr-4 text-gray-900 dark:text-white font-medium">
+                {unroutedDisplayName(doc)}
+              </td>
+              <td className="py-2 pr-4 text-xs text-gray-500 dark:text-gray-400">
+                {doc.node_name || 'Deleted node'}
+              </td>
+              <td className="py-2 pr-4 text-xs text-gray-500 dark:text-gray-400">
+                {doc.unrouted_port || 'default'}
+              </td>
+              <td className="py-2 pr-4 text-xs">
+                {doc.workflow_id ? (
+                  <button
+                    onClick={() => navigate(`/app/workflow/${doc.workflow_id}`)}
+                    className="text-indigo-600 dark:text-indigo-400 hover:underline text-left"
+                  >
+                    {doc.workflow_name || '—'}
+                  </button>
+                ) : (
+                  <span className="text-gray-400 dark:text-gray-500">{doc.workflow_name || '—'}</span>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>

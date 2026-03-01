@@ -37,8 +37,10 @@ router.get('/:id/runs', runController.listRuns);
 // Flow Inspector
 router.get('/:workflowId/flow-inspector/summary', flowInspectorController.getSummary);
 router.get('/:workflowId/flow-inspector/nodes/:nodeId/documents', flowInspectorController.getNodeDocuments);
+router.get('/:workflowId/flow-inspector/nodes/:nodeId/unrouted-count', flowInspectorController.getUnroutedCount);
 router.get('/:workflowId/flow-inspector/orphaned', flowInspectorController.getOrphaned);
 router.delete('/:workflowId/flow-inspector/documents/:execId', flowInspectorController.deleteDocument);
 router.post('/:workflowId/flow-inspector/retrigger', flowInspectorController.retrigger);
+router.post('/:workflowId/flow-inspector/send-out', flowInspectorController.sendOut);
 
 module.exports = router;

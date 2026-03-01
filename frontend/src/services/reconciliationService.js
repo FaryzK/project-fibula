@@ -17,6 +17,10 @@ const reconciliationService = {
   countHeldAtSlot: (nodeId, slotId) =>
     api.get('/reconciliation-rules/slots/held-count', { params: { nodeId, slotId } }).then((r) => r.data.count),
 
+  // Unrouted documents (output port had no connected downstream edge)
+  listUnroutedDocs: () =>
+    api.get('/reconciliation-rules/unrouted').then((r) => r.data),
+
   // New: Held documents pool
   // statusFilter: 'held' for only unreconciled docs, omit for all (Data Pool)
   listHeldDocs: (statusFilter) =>

@@ -14,14 +14,16 @@ The Flow Inspector has two main areas:
 Left sidebar — a list of all nodes in the workflow, ordered topologically (following the direction of document flow). Each node row shows:
 - The node name
 - A colour accent matching the node's category (same colours as the canvas)
-- Live count badges: number of documents currently Processing / Held / Failed at that node
+- Live count badges: number of documents currently Processing / Held / Unrouted / Failed at that node
 - Clicking a node row selects it and opens its document panel on the right
 
 Right panel — shows documents at the selected node. Tabs vary by node type:
 
-For most nodes: Processing · Failed
-For Extractor and Document Folder nodes: Processing · Held · Failed
-For Reconciliation nodes: Held Documents · Failed
+For most nodes: Processing · Unrouted (one per output port) · Failed
+For Extractor and Document Folder nodes: Processing · Held · Unrouted (one per output port) · Failed
+For Reconciliation nodes: Held Documents · Unrouted (one per output port) · Failed
+
+The Unrouted tabs are always shown for all nodes regardless of whether any unrouted documents exist, so the user can see all output ports and know which ones need connecting.
 
 (Reconciliation nodes omit the Processing tab — documents transition through processing so briefly it is not meaningful to surface. The "Held" tab is renamed "Held Documents" for Reconciliation nodes to match the terminology used in the Reconciliation service.)
 
@@ -86,6 +88,47 @@ Empty state: "No documents currently held."
 
 ---
 
+UNROUTED TABS
+
+A document becomes unrouted when it finishes processing at a node and exits through an output port that has no outgoing edge (i.e. nothing is connected downstream on that port).
+
+One Unrouted tab is shown per output port of the node. The tab label is the port name (e.g. "true", "false" for IF nodes; the category label for CATEGORISATION nodes; the slot label for RECONCILIATION nodes; "output" for single-output nodes). Tabs are always visible even when empty.
+
+Each row shows:
+- File name
+- Time the document became unrouted
+- A checkbox for multi-select
+- A Delete button per row (permanently removes the document execution)
+- A Re-trigger button per row (sends the document back to the start of the workflow; see RE-TRIGGER FLOW)
+
+Bulk actions (appear when one or more rows are selected):
+- Delete selected
+- Send Out selected — resumes the selected documents from the downstream node connected to that port (see SEND OUT FROM UNROUTED below)
+- Re-trigger selected — sends the selected documents back to the start of the workflow (see RE-TRIGGER FLOW)
+
+The list updates via polling every 2 seconds.
+
+Empty state: "No unrouted documents. Connect this port to route documents forward."
+
+
+---
+
+SEND OUT FROM UNROUTED
+
+Send Out resumes a document's journey through the workflow from the downstream node currently connected to that output port.
+
+The original file and all metadata accumulated so far are preserved — no re-processing of previous nodes occurs. The document's existing workflow_run_id is reused so that the canvas continues to show real-time status for the resumed leg.
+
+When Send Out is triggered:
+1. The system looks up the current outgoing edges for the node's output port. If no edge exists (the port is still unconnected), Send Out is blocked and an inline message tells the user to connect the port first.
+2. For each selected document, the document_execution status is set back to 'processing', unrouted_port is cleared, and execution resumes from the downstream node.
+3. Documents disappear from the Unrouted tab immediately on Send Out.
+
+Send Out is available only from the Unrouted tab (per-document via individual selection or bulk via multi-select).
+
+
+---
+
 FAILED TAB
 
 Shows documents that failed at this node (looked up via node_execution_logs where node_id = this node and status = failed).
@@ -128,26 +171,28 @@ Empty state: "No orphaned documents."
 
 NODE DELETION WARNING
 
-When a user attempts to delete a node that has held documents, a warning modal appears before deletion proceeds.
+When a user attempts to delete a node that has held or unrouted documents, a warning modal appears before deletion proceeds.
 
 The warning is triggered in two ways:
 - Pressing Delete / Backspace on a selected node on the canvas
 - Clicking the "Delete node" button in the NodePanel sidebar
 
-The modal shows:
-- How many documents are currently held at this node
+The modal shows, separately:
+- How many documents are currently held at this node (if any)
+- How many documents are currently unrouted at this node (if any)
 - A note that processing documents will be allowed to complete naturally; if they later reach the deleted node they will fail and appear in the Failed tab of the orphaned section
-- "If you proceed, all held documents will be moved to Orphaned Documents."
+- "If you proceed, all held and unrouted documents will be moved to Orphaned Documents."
 
 Actions in the modal:
 - Cancel — dismiss and keep the node
-- Proceed — delete the node and move all held documents to orphaned status
+- Proceed — delete the node and move all held and unrouted documents to orphaned status
 
-If the node has no held documents, deletion proceeds immediately without a warning (existing behaviour).
+If the node has no held or unrouted documents, deletion proceeds immediately without a warning (existing behaviour).
 
-When held documents are orphaned due to node deletion:
+When held or unrouted documents are orphaned due to node deletion:
 - Their document_executions status is set to 'orphaned' and they appear in the Orphaned panel
 - Their extractor_held_documents records (if any) are deleted so they no longer appear in the extractor's Held tab
+- For RECONCILIATION nodes: their reconciliation_held_documents records are also deleted (see RECONCILIATION NODE DELETION)
 
 
 ---
@@ -207,6 +252,32 @@ This cleanup happens whether or not the user was warned (i.e. even if the node h
 
 ---
 
+OUTPUT PORT CHANGE WARNING
+
+When a node's output port is changed or removed — because the port ID changes — the system checks whether any unrouted documents exist for the affected port at this node.
+
+Output ports change ID when:
+- A CATEGORISATION node's category label is renamed or deleted
+- A SWITCH node's case value is renamed or deleted
+- A RECONCILIATION node's slot extractor is changed or the slot is removed (the output port ID is tied to the slot ID)
+
+If unrouted documents exist for the old port, a warning modal appears before saving:
+- Shows how many unrouted documents exist for that port
+- Notes that those documents cannot be routed forward and will be moved to Orphaned Documents
+
+Actions in the modal:
+- Cancel — dismiss; no change is saved
+- Proceed — save the change and move the unrouted documents to orphaned status
+
+When unrouted documents are orphaned due to an output port change:
+- Their document_executions status is set to 'orphaned' and they appear in the Orphaned panel
+- For RECONCILIATION nodes: because unrouted reconciliation documents have already been sent out by the reconciliation service (they are no longer held), their reconciliation_held_documents records are also deleted and any matching set membership is cleaned up
+
+If no unrouted documents exist for the affected port, the change saves immediately without a warning.
+
+
+---
+
 RE-TRIGGER FLOW
 
 Re-triggering sends a document back into the workflow from the beginning. The original file stored in Supabase Storage is reused — no re-upload is required.
@@ -226,14 +297,28 @@ When a document is re-triggered from the Orphaned panel, it is immediately remov
 
 DATA MODEL
 
-document_executions gains a new status value: 'orphaned'
+document_executions gains two new status values: 'orphaned' and 'unrouted'
 
-When a node is deleted and it has held documents, those document_executions are updated:
+New columns on document_executions:
+- orphaned_node_name (TEXT, nullable) — stores the name of the deleted node when status='orphaned', so it can be displayed in the Orphaned panel even though the node no longer exists
+- unrouted_port (TEXT, nullable) — stores the output port ID the document exited through when status='unrouted', used to query which Unrouted tab the document belongs to
+
+When a document finishes processing at a node and exits through a port with no outgoing edges:
+- status → 'unrouted'
+- current_node_id → this node (unchanged)
+- unrouted_port → the port ID it tried to exit through
+
+When a node is deleted and it has held or unrouted documents, those document_executions are updated:
 - status → 'orphaned'
 - current_node_id → null
-- A new column orphaned_node_name (TEXT) stores the name of the deleted node so it can be displayed in the Orphaned panel even though the node no longer exists
+- orphaned_node_name → node name at time of deletion
 
-No changes are needed to node_execution_logs — the existing held/failed log entries remain and are used for the Held and Failed tab queries.
+When an unrouted document is sent out (resumed):
+- status → 'processing' at the downstream node
+- current_node_id → downstream node
+- unrouted_port → cleared (null)
+
+node_execution_logs gains one new status value: 'unrouted', written when the document becomes unrouted at a node. This allows the node log entry to reflect the terminal state of the document at that node.
 
 
 ---

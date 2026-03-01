@@ -56,7 +56,7 @@ export async function deleteNode(workflowId, nodeId, force = false) {
     return null;
   } catch (err) {
     if (err.response?.status === 409) {
-      return { heldCount: err.response.data.heldCount };
+      return { heldCount: err.response.data.heldCount || 0, unroutedCount: err.response.data.unroutedCount || 0 };
     }
     throw err;
   }

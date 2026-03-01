@@ -1,6 +1,12 @@
 The workflow canvas page can be accessed from the workflow tab. The workflow tab shows a list of workflows created by the user, and its workflow name. Workflows can be deleted, published or unpublished. A workflow can be renamed. Users can click the Add Workflow button to start creating a new workflow. They will be directed to the workflow canvas page.
 
-The workflow canvas page allows the user to build a document processing workflow by placing down nodes and linking them together. Each node takes an expected input and produces an output. Some nodes also provide services to users (document folder node, reconciliation node, extractor node). Nodes can branch out and branch back in. Each node will run for each document that passes through it. When a node branches out (e.g. 1 node connecting out to 2 nodes), the node sends the same document and metadata to both downstream nodes. 2 nodes can also connect back into one node — in this case documents simply flow into it from both paths.
+The workflow canvas page allows the user to build a document processing workflow by placing down nodes and linking them together. Each node takes an expected input and produces an output. Some nodes also provide services to users (document folder node, reconciliation node, extractor node). Nodes can branch out and branch back in. Each node will run for each document that passes through it.
+
+When a node's output port has exactly one outgoing edge, the document continues along that single path as the same execution. When a node's output port has two or more outgoing edges (multi-edge fan-out), the engine creates one independent child document per branch — each child is a distinct document record with its own file URL (copied from the source) and its own document_id. The source document becomes the parent; children reference it via parent_document_execution_id. Branch names are baked into the file name (e.g. invoice(1).pdf, invoice(2).pdf). Each child is fully independent: deleting one branch never affects the others. This allows each branch to reach its own terminal state (completed, held, unrouted, or failed) without interfering with the others.
+
+When a node's output port has no outgoing edge and no reconciliation release, the document becomes "unrouted" — it stops there and is recorded with status=unrouted in the Flow Inspector and on the Reconciliation page's Unrouted tab.
+
+2 nodes can also connect back into one node — in this case documents simply flow into it from both paths.
 
 
 ---
@@ -36,6 +42,8 @@ Nodes are connected by dragging from an output handle (right side of a node) to 
 Clicking on an existing edge/link shows a confirmation prompt to delete it.
 
 A node can have multiple input ports and multiple output ports. Multi-output nodes (e.g. IF, SWITCH, CATEGORISATION, RECONCILIATION) show labeled port rows on the right side of the node. Multi-input nodes (e.g. RECONCILIATION) show labeled port rows on the left side.
+
+An output handle that has two or more edges connected to it is a fan-out handle. Documents reaching that port will be cloned into independent child executions, one per edge. The canvas should visually indicate this — for example with a small "⑂" or "×N" badge on the handle — so the user understands that branching from that handle will duplicate the document rather than split it along mutually exclusive paths.
 
 
 ---
@@ -109,9 +117,14 @@ The banner has a Dismiss button to clear it.
 
 EXECUTION MODEL
 
-Documents are processed sequentially in the outer execution loop. This prevents race conditions in the reconciliation node, which needs to check whether sibling documents have all reached held state before releasing them.
+Edge routing rules per output port:
+- 0 edges → document is marked unrouted (status=unrouted). Visible in Flow Inspector's Unrouted tab and the Reconciliation page's Unrouted tab.
+- 1 edge → same document_execution row continues downstream (most common case).
+- 2+ edges → one independent child document is created per branch. The source file is copied in storage and a new documents row is created for each branch (new document_id, new file URL). The branch file name encodes its position: invoice.pdf → invoice(1).pdf, invoice(2).pdf. Each child exec references the source via parent_document_execution_id. The parent exec is marked completed. Children run sequentially to preserve reconciliation ordering.
 
-An exception is made for fanout (document splitting): when a splitting node produces multiple sub-documents, all sibling sub-documents are processed in parallel. This is safe because splitting sub-documents are independent of each other and do not interact through shared state.
+Document splitting fanout (SPLITTING node) works the same way at the storage level — it also creates new document records with new file URLs, one per sub-document — but the motivation and content differ. Multi-edge fan-out produces identical copies of the source file, one per branch edge (topology-driven). SPLITTING produces distinct sub-documents with different content (e.g. different page ranges), extracted from the source by the splitting instruction (instruction-driven). Both fanout children are run sequentially to prevent TOCTOU races when sub-documents converge at a reconciliation node.
+
+Documents are processed sequentially in the outer execution loop. This prevents race conditions in the reconciliation node, which needs to check whether sibling documents have all reached held state before releasing them.
 
 In a published workflow, each document upload creates its own workflow run and is fully independent. Race conditions do not apply in this case because each run has exactly one document in its execution queue at the start.
 
