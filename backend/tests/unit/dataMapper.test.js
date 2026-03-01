@@ -326,6 +326,7 @@ describe('Data Map Set routes', () => {
   describe('PATCH /api/data-map-sets/:id/records/:recordId', () => {
     it('updates a record with valid values', async () => {
       dataMapperModel.findSetById.mockResolvedValue(FAKE_SET);
+      dataMapperModel.findRecordById.mockResolvedValue({ id: 'rec-1', values: { VendorName: 'Acme Corp', VendorCode: 'V001' } });
       dataMapperModel.updateRecord.mockResolvedValue({
         id: 'rec-1',
         values: { VendorName: 'Updated', VendorCode: 'V999' },
@@ -336,6 +337,19 @@ describe('Data Map Set routes', () => {
         .send({ values: { VendorName: 'Updated', VendorCode: 'V999' } });
       expect(res.statusCode).toBe(200);
       expect(res.body.values.VendorName).toBe('Updated');
+    });
+
+    it('merges partial update with existing values', async () => {
+      dataMapperModel.findSetById.mockResolvedValue(FAKE_SET);
+      dataMapperModel.findRecordById.mockResolvedValue({ id: 'rec-1', values: { VendorName: 'Acme Corp', VendorCode: 'V001' } });
+      dataMapperModel.updateRecord.mockImplementation((id, vals) => Promise.resolve({ id, values: vals }));
+      const res = await request(app)
+        .patch('/api/data-map-sets/set-1/records/rec-1')
+        .set(authHeaders())
+        .send({ values: { VendorName: 'Updated' } });
+      expect(res.statusCode).toBe(200);
+      // Verify merged: VendorCode preserved from existing, VendorName updated
+      expect(dataMapperModel.updateRecord).toHaveBeenCalledWith('rec-1', { VendorName: 'Updated', VendorCode: 'V001' });
     });
 
     it('rejects unknown columns (400)', async () => {

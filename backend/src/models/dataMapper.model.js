@@ -106,6 +106,11 @@ module.exports = {
       .returning('*');
   },
 
+  // Find a single record by its primary key
+  async findRecordById(recordId) {
+    return db(RECORDS).where({ id: recordId }).first();
+  },
+
   // Delete a single record by its primary key
   async removeRecord(recordId) {
     return db(RECORDS).where({ id: recordId }).delete();

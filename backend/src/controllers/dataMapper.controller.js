@@ -263,7 +263,13 @@ module.exports = {
         return res.status(400).json({ error: 'Validation failed', validationErrors: errors });
       }
 
-      const row = await dataMapperModel.updateRecord(req.params.recordId, coerced);
+      // Merge with existing values so partial updates don't drop unspecified columns
+      const existing = await dataMapperModel.findRecordById(req.params.recordId);
+      if (!existing) return res.status(404).json({ error: 'Record not found' });
+      const existingVals = typeof existing.values === 'string' ? JSON.parse(existing.values) : existing.values || {};
+      const merged = { ...existingVals, ...coerced };
+
+      const row = await dataMapperModel.updateRecord(req.params.recordId, merged);
       return res.json(row);
     } catch (err) {
       next(err);

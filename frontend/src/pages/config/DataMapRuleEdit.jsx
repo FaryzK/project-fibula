@@ -371,9 +371,9 @@ function DataMapRuleEdit() {
                               type="button"
                               onClick={() => appendToExpression(i, 'mapset')}
                               className="px-2 py-0.5 text-xs bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 rounded hover:bg-amber-200 dark:hover:bg-amber-900/70 transition-colors"
-                              title={`Matched value from set column: ${tg.set_column || '(not set)'}`}
+                              title={`Matched value from set column: ${tg.map_set_column || '(not set)'}`}
                             >
-                              mapset{tg.set_column ? ` (${tg.set_column})` : ''}
+                              mapset{tg.map_set_column ? ` (${tg.map_set_column})` : ''}
                             </button>
                           </div>
                         </div>
