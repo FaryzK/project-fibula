@@ -9,6 +9,7 @@ import dataMapperService from '../../services/dataMapperService';
 import reconciliationService from '../../services/reconciliationService';
 import * as workflowService from '../../services/workflowService';
 import useCanvasStore from '../../stores/useCanvasStore';
+import flowInspectorService from '../../services/flowInspectorService';
 
 // ─── Condition row helpers ───────────────────────────────────────────────────
 
@@ -509,9 +510,11 @@ function NodePanel({ node, onClose }) {
   const [nodeName, setNodeName] = useState(node.data.label);
   const [renamingNode, setRenamingNode] = useState(false);
   const [nodeLog, setNodeLog] = useState(null);
-  const [nodeDeleteWarning, setNodeDeleteWarning] = useState(null); // { heldCount } | null
+  const [nodeDeleteWarning, setNodeDeleteWarning] = useState(null); // { heldCount, unroutedCount } | null
   const [extractorChangeWarning, setExtractorChangeWarning] = useState(null); // { pendingConfig, heldCount } | null
-  const [reconSlotChangeWarning, setReconSlotChangeWarning] = useState(null); // { pendingConfig, heldCount, action: 'change'|'remove' } | null
+  const [reconSlotChangeWarning, setReconSlotChangeWarning] = useState(null); // { pendingConfig, heldCount, unroutedCount, action: 'change'|'remove' } | null
+  const [switchPortChangeWarning, setSwitchPortChangeWarning] = useState(null); // { unroutedCount } | null
+  const [categorisationPortChangeWarning, setCategorisationPortChangeWarning] = useState(null); // { pendingConfig, unroutedCount } | null
 
   useEffect(() => {
     if (nodeType === 'SPLITTING') splittingService.getAll().then(({ data }) => setSplittingOptions(data));
@@ -558,14 +561,34 @@ function NodePanel({ node, onClose }) {
   }
 
   async function handleSave() {
+    // SWITCH: check if any removed cases have unrouted documents at their port
+    if (nodeType === 'SWITCH') {
+      const oldCases = node.data.config?.cases || [];
+      const newCaseIds = new Set((config.cases || []).map((c) => c.id));
+      const removedCases = oldCases.filter((c) => c.id && !newCaseIds.has(c.id));
+      if (removedCases.length > 0) {
+        try {
+          const counts = await Promise.all(
+            removedCases.map((c) =>
+              flowInspectorService.getUnroutedCount(workflowId, node.id, c.id).then((r) => r.data.count)
+            )
+          );
+          const totalUnrouted = counts.reduce((a, b) => a + b, 0);
+          if (totalUnrouted > 0) {
+            setSwitchPortChangeWarning({ unroutedCount: totalUnrouted });
+            return;
+          }
+        } catch (_) {}
+      }
+    }
     await saveConfig(config);
     onClose();
   }
 
   async function handleDelete() {
     const result = await deleteNode(node.id);
-    if (result?.heldCount) {
-      setNodeDeleteWarning({ heldCount: result.heldCount });
+    if (result?.heldCount > 0 || result?.unroutedCount > 0) {
+      setNodeDeleteWarning({ heldCount: result.heldCount || 0, unroutedCount: result.unroutedCount || 0 });
     } else {
       onClose();
     }
@@ -674,8 +697,28 @@ function NodePanel({ node, onClose }) {
                   categorisation_prompt_id: e.target.value || null,
                   categorisation_labels: selected ? selected.labels.map((l) => l.label) : [],
                 };
-                setConfig(newConfig);
-                saveConfig(newConfig);
+                // Check if any removed labels have unrouted docs at their port
+                const oldLabels = config.categorisation_labels || [];
+                const newLabelSet = new Set(newConfig.categorisation_labels || []);
+                const removedLabels = oldLabels.filter((l) => !newLabelSet.has(l));
+                if (removedLabels.length > 0) {
+                  Promise.all(
+                    removedLabels.map((l) =>
+                      flowInspectorService.getUnroutedCount(workflowId, node.id, l).then((r) => r.data.count)
+                    )
+                  ).then((counts) => {
+                    const totalUnrouted = counts.reduce((a, b) => a + b, 0);
+                    if (totalUnrouted > 0) {
+                      setCategorisationPortChangeWarning({ pendingConfig: newConfig, unroutedCount: totalUnrouted });
+                    } else {
+                      setConfig(newConfig);
+                      saveConfig(newConfig);
+                    }
+                  }).catch(() => { setConfig(newConfig); saveConfig(newConfig); });
+                } else {
+                  setConfig(newConfig);
+                  saveConfig(newConfig);
+                }
               }}
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
             >
@@ -878,16 +921,17 @@ function NodePanel({ node, onClose }) {
                     const newConfig = { ...config, recon_inputs: updated };
                     const oldExtractorId = slot.extractor_id;
                     if (oldExtractorId && e.target.value !== oldExtractorId) {
-                      reconciliationService.countHeldAtSlot(node.id, slot.id)
-                        .then((count) => {
-                          if (count > 0) {
-                            setReconSlotChangeWarning({ pendingConfig: newConfig, heldCount: count, action: 'change' });
-                          } else {
-                            setConfig(newConfig);
-                            saveConfig(newConfig);
-                          }
-                        })
-                        .catch(() => { setConfig(newConfig); saveConfig(newConfig); });
+                      Promise.all([
+                        reconciliationService.countHeldAtSlot(node.id, slot.id).catch(() => 0),
+                        flowInspectorService.getUnroutedCount(workflowId, node.id, slot.id).then((r) => r.data.count).catch(() => 0),
+                      ]).then(([heldCount, unroutedCount]) => {
+                        if (heldCount > 0 || unroutedCount > 0) {
+                          setReconSlotChangeWarning({ pendingConfig: newConfig, heldCount, unroutedCount, action: 'change' });
+                        } else {
+                          setConfig(newConfig);
+                          saveConfig(newConfig);
+                        }
+                      }).catch(() => { setConfig(newConfig); saveConfig(newConfig); });
                     } else {
                       setConfig(newConfig);
                       saveConfig(newConfig);
@@ -905,16 +949,17 @@ function NodePanel({ node, onClose }) {
                     const updated = (config.recon_inputs || []).filter((s) => s.id !== slot.id);
                     const newConfig = { ...config, recon_inputs: updated };
                     if (slot.extractor_id) {
-                      reconciliationService.countHeldAtSlot(node.id, slot.id)
-                        .then((count) => {
-                          if (count > 0) {
-                            setReconSlotChangeWarning({ pendingConfig: newConfig, heldCount: count, action: 'remove' });
-                          } else {
-                            setConfig(newConfig);
-                            saveConfig(newConfig);
-                          }
-                        })
-                        .catch(() => { setConfig(newConfig); saveConfig(newConfig); });
+                      Promise.all([
+                        reconciliationService.countHeldAtSlot(node.id, slot.id).catch(() => 0),
+                        flowInspectorService.getUnroutedCount(workflowId, node.id, slot.id).then((r) => r.data.count).catch(() => 0),
+                      ]).then(([heldCount, unroutedCount]) => {
+                        if (heldCount > 0 || unroutedCount > 0) {
+                          setReconSlotChangeWarning({ pendingConfig: newConfig, heldCount, unroutedCount, action: 'remove' });
+                        } else {
+                          setConfig(newConfig);
+                          saveConfig(newConfig);
+                        }
+                      }).catch(() => { setConfig(newConfig); saveConfig(newConfig); });
                     } else {
                       setConfig(newConfig);
                       saveConfig(newConfig);
@@ -991,7 +1036,7 @@ function NodePanel({ node, onClose }) {
       </div>
     </div>
 
-    {/* Node deletion warning — shown when the node has held documents */}
+    {/* Node deletion warning — shown when the node has held or unrouted documents */}
     {nodeDeleteWarning && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
         <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-sm mx-4">
@@ -999,13 +1044,16 @@ function NodePanel({ node, onClose }) {
             <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Delete node</h2>
           </div>
           <div className="px-5 py-4 text-sm text-gray-700 dark:text-gray-300 space-y-2">
-            <p>
-              This node has <strong>{nodeDeleteWarning.heldCount}</strong> held document{nodeDeleteWarning.heldCount !== 1 ? 's' : ''}.
-            </p>
+            {nodeDeleteWarning.heldCount > 0 && (
+              <p>This node has <strong>{nodeDeleteWarning.heldCount}</strong> held document{nodeDeleteWarning.heldCount !== 1 ? 's' : ''}.</p>
+            )}
+            {nodeDeleteWarning.unroutedCount > 0 && (
+              <p>This node has <strong>{nodeDeleteWarning.unroutedCount}</strong> unrouted document{nodeDeleteWarning.unroutedCount !== 1 ? 's' : ''}.</p>
+            )}
             <p>
               Processing documents will be allowed to complete naturally. If they later reach the deleted node, they will fail and appear in the Failed tab.
             </p>
-            <p>If you proceed, all held documents will be moved to Orphaned Documents.</p>
+            <p>If you proceed, all held and unrouted documents will be moved to Orphaned Documents.</p>
           </div>
           <div className="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
             <button
@@ -1066,7 +1114,7 @@ function NodePanel({ node, onClose }) {
       </div>
     )}
 
-    {/* Reconciliation slot change/remove warning — shown when a slot with held docs is modified */}
+    {/* Reconciliation slot change/remove warning */}
     {reconSlotChangeWarning && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
         <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-sm mx-4">
@@ -1076,9 +1124,12 @@ function NodePanel({ node, onClose }) {
             </h2>
           </div>
           <div className="px-5 py-4 text-sm text-gray-700 dark:text-gray-300 space-y-2">
-            <p>
-              This slot has <strong>{reconSlotChangeWarning.heldCount}</strong> held document{reconSlotChangeWarning.heldCount !== 1 ? 's' : ''}.
-            </p>
+            {reconSlotChangeWarning.heldCount > 0 && (
+              <p>This slot has <strong>{reconSlotChangeWarning.heldCount}</strong> held document{reconSlotChangeWarning.heldCount !== 1 ? 's' : ''}.</p>
+            )}
+            {reconSlotChangeWarning.unroutedCount > 0 && (
+              <p>This slot has <strong>{reconSlotChangeWarning.unroutedCount}</strong> unrouted document{reconSlotChangeWarning.unroutedCount !== 1 ? 's' : ''}.</p>
+            )}
             <p>
               If you proceed, those documents will be moved to Orphaned Documents and removed from the reconciliation data pool.
             </p>
@@ -1095,6 +1146,76 @@ function NodePanel({ node, onClose }) {
                 setConfig(reconSlotChangeWarning.pendingConfig);
                 saveConfig(reconSlotChangeWarning.pendingConfig);
                 setReconSlotChangeWarning(null);
+              }}
+              className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition"
+            >
+              Proceed
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* SWITCH port change warning — removed cases have unrouted documents */}
+    {switchPortChangeWarning && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-sm mx-4">
+          <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Remove case port</h2>
+          </div>
+          <div className="px-5 py-4 text-sm text-gray-700 dark:text-gray-300 space-y-2">
+            <p>
+              <strong>{switchPortChangeWarning.unroutedCount}</strong> document{switchPortChangeWarning.unroutedCount !== 1 ? 's are' : ' is'} currently unrouted at the removed case port{switchPortChangeWarning.unroutedCount !== 1 ? 's' : ''}.
+            </p>
+            <p>If you proceed, those documents will be moved to Orphaned Documents.</p>
+          </div>
+          <div className="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
+            <button
+              onClick={() => setSwitchPortChangeWarning(null)}
+              className="px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={async () => {
+                setSwitchPortChangeWarning(null);
+                await saveConfig(config);
+                onClose();
+              }}
+              className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition"
+            >
+              Proceed
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* CATEGORISATION port change warning — removed labels have unrouted documents */}
+    {categorisationPortChangeWarning && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-sm mx-4">
+          <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Change categorisation prompt</h2>
+          </div>
+          <div className="px-5 py-4 text-sm text-gray-700 dark:text-gray-300 space-y-2">
+            <p>
+              <strong>{categorisationPortChangeWarning.unroutedCount}</strong> document{categorisationPortChangeWarning.unroutedCount !== 1 ? 's are' : ' is'} currently unrouted at output port{categorisationPortChangeWarning.unroutedCount !== 1 ? 's' : ''} that will be removed.
+            </p>
+            <p>If you proceed, those documents will be moved to Orphaned Documents.</p>
+          </div>
+          <div className="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
+            <button
+              onClick={() => setCategorisationPortChangeWarning(null)}
+              className="px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                setConfig(categorisationPortChangeWarning.pendingConfig);
+                saveConfig(categorisationPortChangeWarning.pendingConfig);
+                setCategorisationPortChangeWarning(null);
               }}
               className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition"
             >

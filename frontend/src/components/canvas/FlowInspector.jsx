@@ -27,6 +27,23 @@ const NODE_CATEGORIES = {
   HTTP:            'Output',
 };
 
+/** Return the display name for a doc.
+ *  New records: branch suffix is baked into file_name (e.g. invoice(2).pdf) — return as-is.
+ *  Legacy records: branch suffix is derived from _branch_index metadata and appended. */
+function displayName(doc) {
+  try {
+    const meta = typeof doc.metadata === 'string' ? JSON.parse(doc.metadata) : (doc.metadata || {});
+    // Legacy: old records stored _branch_index in metadata instead of the file name
+    const legacyIdx = meta._branch_index;
+    if (legacyIdx == null || !doc.file_name) return doc.file_name || '—';
+    const lastDot = doc.file_name.lastIndexOf('.');
+    if (lastDot === -1) return `${doc.file_name}(${legacyIdx})`;
+    return `${doc.file_name.slice(0, lastDot)}(${legacyIdx})${doc.file_name.slice(lastDot)}`;
+  } catch (_) {
+    return doc.file_name || '—';
+  }
+}
+
 function timeAgo(dateStr) {
   if (!dateStr) return '';
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -36,6 +53,58 @@ function timeAgo(dateStr) {
   if (m < 60) return `${m}m ago`;
   const h = Math.floor(m / 60);
   return `${h}h ago`;
+}
+
+/** Derive output port list from node type + config — mirrors FibulaNode.getOutputHandles */
+function getOutputPorts(nodeType, config) {
+  switch (nodeType) {
+    case 'RECONCILIATION': {
+      const slots = config?.recon_inputs || [];
+      if (slots.length > 0) return slots.map((s) => ({ id: s.id, label: s.label || `Slot ${s.id}` }));
+      return [{ id: 'default', label: 'Output' }];
+    }
+    case 'IF':
+      return [{ id: 'true', label: 'True' }, { id: 'false', label: 'False' }];
+    case 'SWITCH': {
+      const cases = (config?.cases || []).map((c) => ({ id: c.id, label: c.label || c.id }));
+      return [...cases, { id: 'fallback', label: 'Fallback' }];
+    }
+    case 'CATEGORISATION': {
+      const labels = config?.categorisation_labels || [];
+      if (labels.length === 0) return [{ id: 'default', label: 'Output' }];
+      return labels.map((l) => ({ id: l, label: l }));
+    }
+    default:
+      return [{ id: 'default', label: 'Output' }];
+  }
+}
+
+/** Build tab list for a node — includes one Unrouted tab per output port */
+function getNodeTabs(nodeType, config) {
+  const ports = getOutputPorts(nodeType, config);
+  const unroutedTabs = ports.map((p) => ({
+    id: `unrouted:${p.id}`,
+    label: ports.length === 1 ? 'Unrouted' : `Unrouted (${p.label})`,
+    portId: p.id,
+    type: 'unrouted',
+  }));
+
+  if (nodeType === 'RECONCILIATION') {
+    return [
+      { id: 'held', label: 'Held Documents', type: 'held' },
+      ...unroutedTabs,
+      { id: 'failed', label: 'Failed', type: 'failed' },
+    ];
+  }
+
+  const tabs = [];
+  if (nodeType === 'EXTRACTOR' || nodeType === 'DOCUMENT_FOLDER') {
+    tabs.push({ id: 'held', label: 'Held', type: 'held' });
+  }
+  tabs.push({ id: 'processing', label: 'Processing', type: 'processing' });
+  tabs.push(...unroutedTabs);
+  tabs.push({ id: 'failed', label: 'Failed', type: 'failed' });
+  return tabs;
 }
 
 // ─── Retrigger Modal ─────────────────────────────────────────────────────────
@@ -114,42 +183,189 @@ function RetriggerModal({ workflowId, execIds, onClose, onDone }) {
   );
 }
 
-// ─── Node Document Panel ──────────────────────────────────────────────────────
+// ─── Unrouted Panel ───────────────────────────────────────────────────────────
 
-// Tab config per node type
-// Returns [{ id, label }] in display order
-function getNodeTabs(nodeType) {
-  if (nodeType === 'RECONCILIATION') {
-    return [{ id: 'held', label: 'Held Documents' }, { id: 'failed', label: 'Failed' }];
+function UnroutedPanel({ workflowId, node, portId, onRetrigger }) {
+  const [docs, setDocs] = useState([]);
+  const [selected, setSelected] = useState(new Set());
+  const [loading, setLoading] = useState(false);
+  const [sendOutError, setSendOutError] = useState(null);
+  const intervalRef = useRef(null);
+
+  const fetchDocs = useCallback(async () => {
+    try {
+      const r = await flowInspectorService.getNodeDocuments(workflowId, node.id, 'unrouted', portId);
+      setDocs(r.data);
+    } catch (_) {}
+  }, [workflowId, node.id, portId]);
+
+  useEffect(() => {
+    setDocs([]);
+    setSelected(new Set());
+    setSendOutError(null);
+    setLoading(true);
+    fetchDocs().finally(() => setLoading(false));
+    intervalRef.current = setInterval(fetchDocs, 2000);
+    return () => clearInterval(intervalRef.current);
+  }, [fetchDocs]);
+
+  function toggleSelect(id) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
   }
-  const tabs = [{ id: 'processing', label: 'Processing' }];
-  if (nodeType === 'EXTRACTOR' || nodeType === 'DOCUMENT_FOLDER') {
-    tabs.push({ id: 'held', label: 'Held' });
+
+  function toggleAll() {
+    setSelected((prev) => prev.size === docs.length ? new Set() : new Set(docs.map((d) => d.id)));
   }
-  tabs.push({ id: 'failed', label: 'Failed' });
-  return tabs;
+
+  async function handleDelete(ids) {
+    await Promise.all(ids.map((id) => flowInspectorService.deleteDocument(workflowId, id)));
+    setDocs((prev) => prev.filter((d) => !ids.includes(d.id)));
+    setSelected((prev) => { const next = new Set(prev); ids.forEach((id) => next.delete(id)); return next; });
+  }
+
+  async function handleSendOut(ids) {
+    setSendOutError(null);
+    try {
+      await flowInspectorService.sendOut(workflowId, ids, node.id, portId);
+      setDocs((prev) => prev.filter((d) => !ids.includes(d.id)));
+      setSelected((prev) => { const next = new Set(prev); ids.forEach((id) => next.delete(id)); return next; });
+    } catch (err) {
+      const errData = err?.response?.data;
+      if (errData?.error === 'port_not_connected') {
+        setSendOutError('Connect this port to a downstream node before sending out.');
+      } else {
+        setSendOutError('Send Out failed. Please try again.');
+      }
+    }
+  }
+
+  const selArray = [...selected];
+
+  return (
+    <div className="flex flex-col h-full">
+      {selArray.length > 0 && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-indigo-50 dark:bg-indigo-900/20 border-b border-indigo-100 dark:border-indigo-800">
+          <span className="text-xs text-indigo-700 dark:text-indigo-300">{selArray.length} selected</span>
+          <button
+            onClick={() => handleSendOut(selArray)}
+            className="text-xs px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded"
+          >
+            Send Out
+          </button>
+          <button
+            onClick={() => onRetrigger(selArray)}
+            className="text-xs px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded"
+          >
+            Re-trigger
+          </button>
+          <button
+            onClick={() => handleDelete(selArray)}
+            className="text-xs px-2 py-1 bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-900/40 dark:text-red-300 rounded"
+          >
+            Delete
+          </button>
+        </div>
+      )}
+
+      {sendOutError && (
+        <div className="mx-4 mt-3 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg text-xs text-amber-700 dark:text-amber-300">
+          {sendOutError}
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-2">
+        {loading && docs.length === 0 && (
+          <p className="text-xs text-gray-400 text-center py-8">Loading…</p>
+        )}
+        {!loading && docs.length === 0 && (
+          <p className="text-xs text-gray-400 text-center py-8">
+            No unrouted documents. Connect this port to route documents forward.
+          </p>
+        )}
+        {docs.length > 0 && (
+          <div className="flex items-center gap-2 mb-2">
+            <input
+              type="checkbox"
+              checked={selected.size === docs.length && docs.length > 0}
+              onChange={toggleAll}
+              className="w-3.5 h-3.5 rounded border-gray-300 text-indigo-600"
+            />
+            <span className="text-xs text-gray-400">Select all</span>
+          </div>
+        )}
+        {docs.map((doc) => (
+          <div key={doc.id} className="bg-gray-50 dark:bg-gray-700/50 rounded-lg px-3 py-2 text-xs">
+            <div className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                checked={selected.has(doc.id)}
+                onChange={() => toggleSelect(doc.id)}
+                className="w-3.5 h-3.5 mt-0.5 rounded border-gray-300 text-indigo-600 flex-shrink-0"
+              />
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-gray-900 dark:text-white truncate">{displayName(doc)}</p>
+                <p className="text-gray-400 mt-0.5">Unrouted {timeAgo(doc.updated_at)}</p>
+              </div>
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <button
+                  onClick={() => handleSendOut([doc.id])}
+                  className="px-2 py-1 text-xs bg-emerald-100 hover:bg-emerald-200 text-emerald-700 dark:bg-emerald-900/40 dark:hover:bg-emerald-900/60 dark:text-emerald-300 rounded"
+                >
+                  Send Out
+                </button>
+                <button
+                  onClick={() => onRetrigger([doc.id])}
+                  className="px-2 py-1 text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-700 dark:bg-indigo-900/40 dark:hover:bg-indigo-900/60 dark:text-indigo-300 rounded"
+                >
+                  Re-trigger
+                </button>
+                <button
+                  onClick={() => handleDelete([doc.id])}
+                  className="px-2 py-1 text-xs bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-900/40 dark:hover:bg-red-900/60 dark:text-red-300 rounded"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
+// ─── Node Document Panel ──────────────────────────────────────────────────────
+
 function NodeDocumentPanel({ workflowId, node, onRetrigger }) {
-  const tabs = getNodeTabs(node.node_type);
-  const [activeTab, setActiveTab] = useState(tabs[0].id);
+  const tabs = getNodeTabs(node.node_type, node.config);
+  const [activeTabId, setActiveTabId] = useState(tabs[0].id);
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(false);
   const intervalRef = useRef(null);
 
   // Reset to first tab when node changes
   useEffect(() => {
-    setActiveTab(getNodeTabs(node.node_type)[0].id);
+    setActiveTabId(getNodeTabs(node.node_type, node.config)[0].id);
   }, [node.id, node.node_type]);
 
+  const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
+
+  const activeTabType = activeTab.type;
+
   const fetchDocs = useCallback(async () => {
+    if (activeTabType === 'unrouted') return; // UnroutedPanel handles its own fetch
     try {
-      const r = await flowInspectorService.getNodeDocuments(workflowId, node.id, activeTab);
+      const r = await flowInspectorService.getNodeDocuments(workflowId, node.id, activeTabType);
       setDocs(r.data);
     } catch (_) {}
-  }, [workflowId, node.id, activeTab]);
+  }, [workflowId, node.id, activeTabType]);
 
   useEffect(() => {
+    if (activeTabType === 'unrouted') return;
     setDocs([]);
     setLoading(true);
     fetchDocs().finally(() => setLoading(false));
@@ -171,13 +387,13 @@ function NodeDocumentPanel({ workflowId, node, onRetrigger }) {
   return (
     <div className="flex flex-col h-full">
       {/* Tabs */}
-      <div className="flex border-b border-gray-200 dark:border-gray-700 px-4">
+      <div className="flex border-b border-gray-200 dark:border-gray-700 px-4 overflow-x-auto">
         {tabs.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-3 py-2 text-xs font-medium border-b-2 transition -mb-px ${
-              activeTab === tab.id
+            onClick={() => setActiveTabId(tab.id)}
+            className={`px-3 py-2 text-xs font-medium border-b-2 transition -mb-px whitespace-nowrap ${
+              activeTabId === tab.id
                 ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
                 : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
             }`}
@@ -187,42 +403,55 @@ function NodeDocumentPanel({ workflowId, node, onRetrigger }) {
         ))}
       </div>
 
-      {/* Doc list */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-2">
-        {loading && docs.length === 0 && (
-          <p className="text-xs text-gray-400 text-center py-8">Loading…</p>
-        )}
-        {!loading && docs.length === 0 && (
-          <p className="text-xs text-gray-400 text-center py-8">
-            {EMPTY_MESSAGES[activeTab] || 'No documents.'}
-          </p>
-        )}
-        {docs.map((doc) => (
-          <DocRow
-            key={doc.id}
-            doc={doc}
-            tab={activeTab}
-            onDelete={() => handleDelete(doc.id)}
-            onRetrigger={() => onRetrigger([doc.id])}
-          />
-        ))}
-      </div>
+      {/* Unrouted tab — delegate to UnroutedPanel */}
+      {activeTab.type === 'unrouted' && (
+        <UnroutedPanel
+          key={activeTab.id}
+          workflowId={workflowId}
+          node={node}
+          portId={activeTab.portId}
+          onRetrigger={onRetrigger}
+        />
+      )}
+
+      {/* Non-unrouted doc list */}
+      {activeTab.type !== 'unrouted' && (
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {loading && docs.length === 0 && (
+            <p className="text-xs text-gray-400 text-center py-8">Loading…</p>
+          )}
+          {!loading && docs.length === 0 && (
+            <p className="text-xs text-gray-400 text-center py-8">
+              {EMPTY_MESSAGES[activeTab.type] || 'No documents.'}
+            </p>
+          )}
+          {docs.map((doc) => (
+            <DocRow
+              key={doc.id}
+              doc={doc}
+              tabType={activeTab.type}
+              onDelete={() => handleDelete(doc.id)}
+              onRetrigger={() => onRetrigger([doc.id])}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function DocRow({ doc, tab, onDelete, onRetrigger }) {
+function DocRow({ doc, tabType, onDelete, onRetrigger }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
     <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg px-3 py-2 text-xs">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <p className="font-medium text-gray-900 dark:text-white truncate">{doc.file_name}</p>
-          {tab === 'processing' && (
+          <p className="font-medium text-gray-900 dark:text-white truncate">{displayName(doc)}</p>
+          {tabType === 'processing' && (
             <p className="text-gray-400 mt-0.5">Processing since {timeAgo(doc.updated_at)}</p>
           )}
-          {tab === 'held' && (
+          {tabType === 'held' && (
             <p className="text-gray-400 mt-0.5">
               Held {timeAgo(doc.updated_at)}
               {doc.held_reason && (
@@ -232,7 +461,7 @@ function DocRow({ doc, tab, onDelete, onRetrigger }) {
               )}
             </p>
           )}
-          {tab === 'failed' && (
+          {tabType === 'failed' && (
             <>
               <p className="text-gray-400 mt-0.5">Failed {timeAgo(doc.completed_at)}</p>
               {doc.error && (
@@ -247,7 +476,7 @@ function DocRow({ doc, tab, onDelete, onRetrigger }) {
           )}
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
-          {(tab === 'failed') && (
+          {tabType === 'failed' && (
             <button
               onClick={onRetrigger}
               className="px-2 py-1 text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-700 dark:bg-indigo-900/40 dark:hover:bg-indigo-900/60 dark:text-indigo-300 rounded"
@@ -356,7 +585,7 @@ function OrphanedPanel({ workflowId }) {
                 className="w-3.5 h-3.5 mt-0.5 rounded border-gray-300 text-indigo-600 flex-shrink-0"
               />
               <div className="flex-1 min-w-0">
-                <p className="font-medium text-gray-900 dark:text-white truncate">{doc.file_name}</p>
+                <p className="font-medium text-gray-900 dark:text-white truncate">{displayName(doc)}</p>
                 <p className="text-gray-400 mt-0.5">
                   From: <span className="text-gray-600 dark:text-gray-300">{doc.orphaned_node_name}</span>
                   {' · '}{timeAgo(doc.updated_at)}
@@ -459,6 +688,11 @@ export default function FlowInspector({ workflowId }) {
                   {node.held > 0 && (
                     <span className="text-xs px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 font-medium">
                       {node.held}
+                    </span>
+                  )}
+                  {node.unrouted > 0 && (
+                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300 font-medium">
+                      {node.unrouted}
                     </span>
                   )}
                   {node.failed > 0 && (

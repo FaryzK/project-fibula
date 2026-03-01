@@ -72,6 +72,7 @@ function deriveNodeRunStatus(statusList) {
   if (statuses.includes('processing')) return 'processing';
   if (statuses.includes('failed')) return 'failed';
   if (statuses.includes('held')) return 'held';
+  if (statuses.includes('unrouted')) return 'unrouted';
   if (statuses.every((s) => s === 'completed')) return 'completed';
   return null;
 }
@@ -81,6 +82,7 @@ const RUN_STATUS_STYLES = {
   completed:  'bg-green-100 text-green-700 border-green-300',
   failed:     'bg-red-100 text-red-700 border-red-300',
   held:       'bg-orange-100 text-orange-700 border-orange-300',
+  unrouted:   'bg-gray-100 text-gray-600 border-gray-300',
 };
 
 const RUN_STATUS_LABELS = {
@@ -88,6 +90,7 @@ const RUN_STATUS_LABELS = {
   completed:  '✓',
   failed:     '✕',
   held:       '⏸',
+  unrouted:   '⇥',
 };
 
 /**

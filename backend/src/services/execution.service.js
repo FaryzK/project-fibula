@@ -14,6 +14,7 @@ const categorisationService = require('./categorisation.service');
 const extractorService = require('./extractor.service');
 const dataMapperService = require('./dataMapper.service');
 const reconciliationService = require('./reconciliation.service');
+const storageService = require('./storage.service');
 const { evaluateConditions, applyAssignments, resolveValue } = require('../utils/expression');
 const axios = require('axios');
 
@@ -347,17 +348,26 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
           const otherExec = await documentExecutionModel.findById(otherId);
           if (otherExec && otherExec.status === 'held') {
             const otherMeta = parseMeta(otherExec.metadata);
+            const otherEdges = (graph[nodeId] || []).filter((e) => e.sourcePort === otherPort);
             const otherReconLog = await documentExecutionModel.findLog(otherId, nodeId);
             if (otherReconLog) {
               await documentExecutionModel.updateLog(otherReconLog.id, {
-                status: 'completed',
+                status: otherEdges.length === 0 ? 'unrouted' : 'completed',
                 outputPort: otherPort,
                 outputMetadata: otherMeta,
               });
             }
-            const otherEdges = (graph[nodeId] || []).filter((e) => e.sourcePort === otherPort);
-            const startQ = otherEdges.map((e) => ({ nodeId: e.targetNodeId, metadata: otherMeta }));
-            pendingExecQueue.push({ docExecution: otherExec, startQueue: startQ });
+            if (otherEdges.length === 0) {
+              // No downstream edge from this recon port — doc is unrouted after release
+              await documentExecutionModel.updateStatus(otherExec.id, {
+                status: 'unrouted',
+                currentNodeId: nodeId,
+                unroutedPort: otherPort,
+              });
+            } else {
+              const startQ = otherEdges.map((e) => ({ nodeId: e.targetNodeId, metadata: otherMeta }));
+              pendingExecQueue.push({ docExecution: otherExec, startQueue: startQ });
+            }
           }
         }
       }
@@ -383,43 +393,98 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
     if (result.type === 'fanout') {
       const childDocIds = [];
       const fanoutRuns = [];
+      const splitEdges = graph[nodeId] || [];
 
+      // SPLITTING fan-out: sub-document file names come from the splitting service.
+      // When the SPLITTING node has 2+ outgoing edges, each sub-document must be sent
+      // independently down each branch — one separate exec (and file copy) per edge —
+      // so that a hold/unrouted/fail in one branch cannot terminate another branch's processing.
       for (const subDoc of result.subDocuments) {
-        const newDoc = await documentModel.create({
-          userId: workflowUserId,
-          fileName: subDoc.file_name,
-          fileUrl: subDoc.file_url,
-          fileType: subDoc.file_type,
-        });
+        if (splitEdges.length === 0) {
+          // No downstream edges — persist the sub-doc but mark it unrouted.
+          const newDoc = await documentModel.create({
+            userId: workflowUserId,
+            fileName: subDoc.file_name,
+            fileUrl: subDoc.file_url,
+            fileType: subDoc.file_type,
+          });
+          childDocIds.push(newDoc.id);
+          const [unroutedExec] = await documentExecutionModel.createMany(workflowRunId, [newDoc.id]);
+          await documentExecutionModel.updateStatus(unroutedExec.id, { status: 'unrouted', currentNodeId: nodeId, unroutedPort: 'default' });
 
-        childDocIds.push(newDoc.id);
-
-        const newExec = await documentExecutionModel.createMany(workflowRunId, [newDoc.id]);
-
-        const nextNodes = (graph[nodeId] || []).map((e) => ({
-          nodeId: e.targetNodeId,
-          metadata: { document_id: newDoc.id, split_label: subDoc.label, parent_document_id: metadata.document_id },
-        }));
-
-        // Pre-create processing logs for all immediate downstream nodes so the canvas
-        // shows them as 'processing' in the same poll that shows the parent as 'completed',
-        // eliminating the visual gap between splitting ✓ and the next node having no badge.
-        for (const nextNode of nextNodes) {
+        } else if (splitEdges.length === 1) {
+          // Single edge — existing behaviour: one doc, one exec, one downstream node.
+          const newDoc = await documentModel.create({
+            userId: workflowUserId,
+            fileName: subDoc.file_name,
+            fileUrl: subDoc.file_url,
+            fileType: subDoc.file_type,
+          });
+          childDocIds.push(newDoc.id);
+          const [newExec] = await documentExecutionModel.createMany(workflowRunId, [newDoc.id]);
+          const subMeta = { document_id: newDoc.id, split_label: subDoc.label, parent_document_id: metadata.document_id };
+          // Pre-create processing log so the canvas shows the next node as 'processing'
+          // in the same poll that shows the splitting node as 'completed'.
           await documentExecutionModel.createLog({
-            documentExecutionId: newExec[0].id,
-            nodeId: nextNode.nodeId,
+            documentExecutionId: newExec.id,
+            nodeId: splitEdges[0].targetNodeId,
             status: 'processing',
-            inputMetadata: nextNode.metadata,
+            inputMetadata: subMeta,
           });
-        }
-        if (nextNodes.length > 0) {
-          await documentExecutionModel.updateStatus(newExec[0].id, {
-            status: 'processing',
-            currentNodeId: nextNodes[0].nodeId,
-          });
-        }
+          await documentExecutionModel.updateStatus(newExec.id, { status: 'processing', currentNodeId: splitEdges[0].targetNodeId });
+          fanoutRuns.push({ childExec: newExec, nextNodes: [{ nodeId: splitEdges[0].targetNodeId, metadata: subMeta }] });
 
-        fanoutRuns.push({ childExec: newExec[0], nextNodes });
+        } else {
+          // 2+ edges: create one independent branch copy per edge so each branch has
+          // its own document_id, file URL, and execution lifecycle.
+          // Branch 0 reuses the splitting service's file URL directly (no extra copy).
+          // Branches 1+ get storage copies so their files are truly independent.
+          const baseName = subDoc.file_name;
+          const lastDot = baseName.lastIndexOf('.');
+          for (let i = 0; i < splitEdges.length; i++) {
+            const edge = splitEdges[i];
+            const branchNum = i + 1;
+            const branchFileName = lastDot !== -1
+              ? `${baseName.slice(0, lastDot)}(${branchNum})${baseName.slice(lastDot)}`
+              : `${baseName}(${branchNum})`;
+
+            let branchFileUrl;
+            if (i === 0) {
+              branchFileUrl = subDoc.file_url; // reuse original upload, avoid redundant copy
+            } else {
+              const sourcePath = subDoc.file_url.split('/documents/').pop();
+              ({ url: branchFileUrl } = await storageService.copy(sourcePath));
+            }
+
+            const branchDoc = await documentModel.create({
+              userId: workflowUserId,
+              fileName: branchFileName,
+              fileUrl: branchFileUrl,
+              fileType: subDoc.file_type,
+            });
+            childDocIds.push(branchDoc.id);
+
+            const branchMeta = {
+              document_id: branchDoc.id,
+              split_label: subDoc.label,
+              parent_document_id: metadata.document_id,
+              parent_document_execution_id: docExecution.id,
+            };
+            const branchExec = await documentExecutionModel.create({
+              workflowRunId,
+              documentId: branchDoc.id,
+              metadata: branchMeta,
+            });
+            await documentExecutionModel.createLog({
+              documentExecutionId: branchExec.id,
+              nodeId: edge.targetNodeId,
+              status: 'processing',
+              inputMetadata: branchMeta,
+            });
+            await documentExecutionModel.updateStatus(branchExec.id, { status: 'processing', currentNodeId: edge.targetNodeId });
+            fanoutRuns.push({ childExec: branchExec, nextNodes: [{ nodeId: edge.targetNodeId, metadata: branchMeta }] });
+          }
+        }
       }
 
       // Update the log with child document IDs (no parent doc_id — parent stops here)
@@ -456,6 +521,91 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
     const nextEdges = (graph[nodeId] || []).filter(
       (e) => e.sourcePort === outputPort || outputPort === 'default'
     );
+
+    // No outgoing edge for this port → document is unrouted.
+    // We still fall through to process any setDocExecIds (reconciliation sibling releases)
+    // before returning, so sibling docs are not left stranded.
+    if (nextEdges.length === 0) {
+      await documentExecutionModel.updateLog(log.id, {
+        status: 'unrouted',
+        outputMetadata: outputMetadata || metadata,
+        outputPort,
+      });
+      await documentExecutionModel.updateStatus(docExecution.id, {
+        status: 'unrouted',
+        currentNodeId: nodeId,
+        unroutedPort: outputPort,
+      });
+      if (!setDocExecIds?.length) return;
+      // else: fall through to setDocExecIds block below, then return at end of loop body.
+    }
+
+    // 2+ edges from the same output port → multi-edge fan-out.
+    // Create one independent child DOCUMENT (storage copy + new documents row) per branch so
+    // each branch is a fully autonomous object: different document_id, different file URL,
+    // independent lifecycle (deleting one branch never touches siblings or the source).
+    // (Skipped when unrouted — we already handled that path above.)
+    if (nextEdges.length > 1 && !setDocExecIds?.length) {
+      await documentExecutionModel.updateLog(log.id, {
+        status: 'completed',
+        outputMetadata: outputMetadata || metadata,
+        outputPort,
+      });
+      await documentExecutionModel.updateStatus(docExecution.id, {
+        status: 'completed',
+        currentNodeId: null,
+      });
+
+      // Read source document once — we need its file_name, file_url, file_type
+      const sourceDoc = await documentModel.findById(docExecution.document_id);
+
+      for (let i = 0; i < nextEdges.length; i++) {
+        const edge = nextEdges[i];
+        const branchNum = i + 1;
+
+        // Compute branch file name: insert (N) before the extension of the source file
+        const sourceName = sourceDoc?.file_name || 'document';
+        const lastDot = sourceName.lastIndexOf('.');
+        const branchFileName = lastDot !== -1
+          ? `${sourceName.slice(0, lastDot)}(${branchNum})${sourceName.slice(lastDot)}`
+          : `${sourceName}(${branchNum})`;
+
+        // Copy the file in storage → gives this branch its own independent file URL
+        const sourcePath = sourceDoc?.file_url?.split('/documents/').pop();
+        const { url: branchFileUrl } = await storageService.copy(sourcePath);
+
+        // Create a new document record for this branch
+        const branchDoc = await documentModel.create({
+          userId: workflowUserId,
+          fileName: branchFileName,
+          fileUrl: branchFileUrl,
+          fileType: sourceDoc?.file_type,
+        });
+
+        // Branch metadata: update document_id to the new branch doc.
+        // parent_document_execution_id records lineage back to the source exec.
+        // No _branch_index/_branch_path — the name is the ground truth.
+        const branchMeta = {
+          ...(outputMetadata || metadata),
+          document_id: branchDoc.id,
+          parent_document_execution_id: docExecution.id,
+        };
+
+        const childExec = await documentExecutionModel.create({
+          workflowRunId,
+          documentId: branchDoc.id,
+          metadata: branchMeta,
+        });
+
+        await runDocument(
+          childExec, nodes, edges, graph, workflowRunId, pendingExecQueue,
+          [{ nodeId: edge.targetNodeId, metadata: branchMeta }],
+        );
+      }
+      return;
+    }
+
+    // Single edge: continue with the same exec (most common path)
     for (const edge of nextEdges) {
       queue.push({ nodeId: edge.targetNodeId, metadata: outputMetadata });
     }
@@ -469,23 +619,36 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
         if (otherExec && otherExec.status === 'held') {
           const otherMeta = parseMeta(otherExec.metadata);
 
-          // Update this doc's recon log from 'held' → 'completed' with the correct output port
-          // so all output port handles light up on the canvas, not just the trigger doc's port.
+          // Update this doc's recon log from 'held' → correct status with the output port.
+          // Use 'unrouted' when no downstream edge exists so canvas badges reflect the real state.
+          const otherEdges = (graph[nodeId] || []).filter((e) => e.sourcePort === otherPort);
           const otherReconLog = await documentExecutionModel.findLog(otherId, nodeId);
           if (otherReconLog) {
             await documentExecutionModel.updateLog(otherReconLog.id, {
-              status: 'completed',
+              status: otherEdges.length === 0 ? 'unrouted' : 'completed',
               outputPort: otherPort,
               outputMetadata: otherMeta,
             });
           }
-
-          const otherEdges = (graph[nodeId] || []).filter((e) => e.sourcePort === otherPort);
-          const startQ = otherEdges.map((e) => ({ nodeId: e.targetNodeId, metadata: otherMeta }));
-          pendingExecQueue.push({ docExecution: otherExec, startQueue: startQ });
+          if (otherEdges.length === 0) {
+            // No downstream edge from this recon port — doc is unrouted after release
+            await documentExecutionModel.updateStatus(otherExec.id, {
+              status: 'unrouted',
+              currentNodeId: nodeId,
+              unroutedPort: otherPort,
+            });
+          } else {
+            const startQ = otherEdges.map((e) => ({ nodeId: e.targetNodeId, metadata: otherMeta }));
+            pendingExecQueue.push({ docExecution: otherExec, startQueue: startQ });
+          }
         }
       }
     }
+
+    // If the current doc's own port was unrouted, we've now processed any sibling releases.
+    // Return here to avoid the final updateStatus('completed') below, which would overwrite
+    // the unrouted status we already wrote.
+    if (nextEdges.length === 0) return;
   }
 
   await documentExecutionModel.updateStatus(docExecution.id, {
@@ -563,7 +726,7 @@ async function resumeDocumentExecution(docExecutionId, fromNodeId, workflowRunId
   const meta = parseMeta(docExec.metadata);
 
   const startQueue = (graph[fromNodeId] || [])
-    .filter((e) => !outputPort || e.sourcePort === outputPort)
+    .filter((e) => !outputPort || outputPort === 'default' || e.sourcePort === outputPort)
     .map((e) => ({ nodeId: e.targetNodeId, metadata: meta }));
 
   await documentExecutionModel.updateStatus(docExecutionId, { status: 'processing' });
