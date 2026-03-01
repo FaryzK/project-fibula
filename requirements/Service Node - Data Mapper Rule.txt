@@ -44,15 +44,37 @@ DATA MAP SETS
 
 A data map set is a reference table used for lookups. Examples: Vendor Master Data, SKU Conversion List, Currency Exchange Rates.
 
+Each set has a name and an ordered list of typed column headers. Each header has a name and a data type (string, number, boolean, date, currency). Each record is a row of values keyed by those column headers.
+
 Creating a Data Map Set
-Users can create a new set in three ways:
-- CSV upload: system detects the first row as headers and creates records from the remaining rows
-- JSON upload: same header detection and record creation
-- Manual entry: user defines column headers one by one, then adds records manually
+Users create a new set by uploading a CSV or JSON file:
+- CSV: first row is treated as column headers; remaining rows become records
+- JSON: expects an array of objects; keys become column headers
 
-Each set has a name and an ordered list of column headers. Each record is a row of values keyed by those column headers.
+After upload, the system detects column headers from the file. The user assigns a data type to each column (string, number, boolean, date, currency) via a dropdown. The user also enters a set name. On submit, the system validates all record values against the declared data types. Type mismatches are reported as errors. Duplicate rows (exact match on all values after coercion) are automatically removed, and the count of removed duplicates is shown.
 
-Users can edit an existing set to update its name, headers, or records.
+Viewing a Data Map Set
+The default view is read-only. It shows:
+- Set name and column headers with data type badges
+- Paginated record table (page size selector: 25, 50, 100)
+- Per-column filters: text search for string and currency columns, range inputs for number and date columns, toggle for boolean columns
+- Download CSV button — exports the full set as a CSV file
+- Delete button — disabled with tooltip if the set is referenced by any rule
+
+Editing a Data Map Set
+Users toggle between View and Edit mode. In Edit mode:
+- Set name is editable
+- Column headers and data types are NOT editable (immutable after creation)
+- Cell values are inline-editable with type validation on blur
+- Users can add a single row manually
+- Users can bulk-add rows by uploading another CSV or JSON file. New rows are validated against the existing column types. Duplicates (against existing + new rows) are removed.
+- Users can delete individual rows
+
+Rules Tab
+Shows all data map rules that reference this set, with links to each rule's edit page. Prevents confusion about downstream impact when modifying set data.
+
+Delete Protection
+A data map set cannot be deleted if it is referenced by any data map rule (via lookup criteria or map targets). The delete button is disabled and shows a tooltip listing the referencing rules.
 
 
 ---
@@ -87,7 +109,9 @@ Defines which fields to populate with values from the matched record. Each targe
 - Sets mode: Map (write the set column value directly) or Calculation (evaluate a formula)
 
 Calculation Mode
-In calculation mode, the user writes a formula expression. The formula has access to two variables:
+In calculation mode, the user writes a formula expression using clickable chips. Only schema fields and set columns with data type 'number' are shown as chips in calculation mode. Operators (+, -, *, /, parentheses) are provided as clickable buttons.
+
+The formula has access to two variables:
 - `schema`: the current value of the target schema field in the document
 - `mapset`: the value from the matched set column
 

@@ -15,11 +15,46 @@ module.exports = {
     return db(SETS).where({ user_id: userId }).orderBy('created_at', 'desc');
   },
 
-  async findSetById(id) {
+  async findSetById(id, { page = 1, pageSize = 0, filters = {} } = {}) {
     const set = await db(SETS).where({ id }).first();
     if (!set) return null;
-    const records = await db(RECORDS).where({ data_map_set_id: id });
-    return { ...set, records };
+
+    let query = db(RECORDS).where({ data_map_set_id: id });
+
+    // Apply per-column filters
+    const headers = typeof set.headers === 'string' ? JSON.parse(set.headers) : set.headers || [];
+    for (const [col, filter] of Object.entries(filters)) {
+      const hdr = headers.find((h) => (typeof h === 'object' ? h.name : h) === col);
+      if (!hdr) continue;
+      const dataType = typeof hdr === 'object' ? hdr.data_type : 'string';
+
+      if (dataType === 'number') {
+        if (filter.min !== undefined) query = query.whereRaw(`(values->>?)::numeric >= ?`, [col, filter.min]);
+        if (filter.max !== undefined) query = query.whereRaw(`(values->>?)::numeric <= ?`, [col, filter.max]);
+      } else if (dataType === 'boolean') {
+        if (filter.value !== undefined) query = query.whereRaw(`values->>? = ?`, [col, String(filter.value)]);
+      } else if (dataType === 'date') {
+        if (filter.from) query = query.whereRaw(`values->>? >= ?`, [col, filter.from]);
+        if (filter.to) query = query.whereRaw(`values->>? <= ?`, [col, filter.to]);
+      } else {
+        // string / currency — ILIKE text search
+        if (filter.search) query = query.whereRaw(`values->>? ILIKE ?`, [col, `%${filter.search}%`]);
+      }
+    }
+
+    // Count total before pagination
+    const countQuery = query.clone();
+    const [{ count }] = await countQuery.count('* as count');
+    const total = parseInt(count, 10);
+
+    // Pagination (pageSize=0 means return all)
+    if (pageSize > 0) {
+      const offset = (page - 1) * pageSize;
+      query = query.limit(pageSize).offset(offset);
+    }
+
+    const records = await query;
+    return { ...set, records, total, page, pageSize };
   },
 
   async createSet({ userId, name, headers, records = [] }) {
@@ -39,7 +74,11 @@ module.exports = {
   async updateSet(id, fields) {
     const allowed = {};
     if (fields.name !== undefined) allowed.name = fields.name;
-    if (fields.headers !== undefined) allowed.headers = JSON.stringify(fields.headers);
+    // Headers are immutable after creation — only update if explicitly forced
+    if (fields.headers !== undefined && fields._forceHeaders) {
+      allowed.headers = JSON.stringify(fields.headers);
+    }
+    if (Object.keys(allowed).length === 0) return this.findSetById(id);
     const [set] = await db(SETS).where({ id }).update(allowed).returning('*');
 
     if (fields.records !== undefined) {
@@ -59,9 +98,48 @@ module.exports = {
     return db(SETS).where({ id }).delete();
   },
 
+  // Bulk insert new records into an existing set
+  async addRecords(setId, records) {
+    if (!records.length) return [];
+    return db(RECORDS)
+      .insert(records.map((r) => ({ data_map_set_id: setId, values: JSON.stringify(r) })))
+      .returning('*');
+  },
+
+  // Delete a single record by its primary key
+  async removeRecord(recordId) {
+    return db(RECORDS).where({ id: recordId }).delete();
+  },
+
+  // Update a single record's values
+  async updateRecord(recordId, values) {
+    const [row] = await db(RECORDS)
+      .where({ id: recordId })
+      .update({ values: JSON.stringify(values) })
+      .returning('*');
+    return row;
+  },
+
   // Returns raw records for a set (used by execution service)
   async findSetRecords(setId) {
     return db(RECORDS).where({ data_map_set_id: setId });
+  },
+
+  // Find which rules reference this set (via lookups or targets)
+  async findSetUsage(setId) {
+    const lookupRules = db(LOOKUPS)
+      .where({ data_map_set_id: setId })
+      .select('rule_id')
+      .distinct();
+    const targetRules = db(TARGETS)
+      .where({ data_map_set_id: setId })
+      .select('rule_id')
+      .distinct();
+
+    return db(RULES)
+      .whereIn('id', lookupRules)
+      .orWhereIn('id', targetRules)
+      .select('id as rule_id', 'name as rule_name');
   },
 
   // ── Data Map Rules ────────────────────────────────────────────────────────

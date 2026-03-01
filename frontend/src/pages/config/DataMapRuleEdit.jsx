@@ -19,7 +19,7 @@ function DataMapRuleEdit() {
   const [extractorId, setExtractorId] = useState('');
   const [extractors, setExtractors] = useState([]);
   const [sets, setSets] = useState([]);
-  const [schemaFields, setSchemaFields] = useState([]); // flat list: header field names + "TableType.column_name"
+  const [schemaFields, setSchemaFields] = useState([]); // [{name, data_type}]
   const [lookups, setLookups] = useState([]);
   const [targets, setTargets] = useState([]);
   const [usage, setUsage] = useState([]);
@@ -57,20 +57,31 @@ function DataMapRuleEdit() {
   useEffect(() => {
     if (!extractorId) { setSchemaFields([]); return; }
     extractorService.getOne(extractorId).then(({ extractor }) => {
-      const fields = (extractor.header_fields || []).map((f) => f.field_name);
+      const fields = (extractor.header_fields || []).map((f) => ({
+        name: f.field_name,
+        data_type: f.data_type || 'string',
+      }));
       for (const tt of extractor.table_types || []) {
-        for (const col of tt.columns || []) fields.push(`${tt.type_name}.${col.column_name}`);
+        for (const col of tt.columns || []) {
+          fields.push({
+            name: `${tt.type_name}.${col.column_name}`,
+            data_type: col.data_type || 'string',
+          });
+        }
       }
       setSchemaFields(fields);
     }).catch(() => setSchemaFields([]));
   }, [extractorId]);
 
-  // Parse a set's headers from the already-loaded sets list
+  // Parse a set's typed headers from the already-loaded sets list
+  // Returns [{name, data_type}]
   function getSetHeaders(setId) {
-    const set = sets.find((s) => s.id === setId);
-    if (!set) return [];
-    try { return typeof set.headers === 'string' ? JSON.parse(set.headers) : (set.headers || []); }
-    catch { return []; }
+    const s = sets.find((x) => x.id === setId);
+    if (!s) return [];
+    try {
+      const raw = typeof s.headers === 'string' ? JSON.parse(s.headers) : (s.headers || []);
+      return raw.map((h) => typeof h === 'object' ? h : { name: h, data_type: 'string' });
+    } catch { return []; }
   }
 
   function addLookup() {
@@ -202,7 +213,7 @@ function DataMapRuleEdit() {
                         disabled={setHeaders.length === 0}
                       >
                         <option value="">Column…</option>
-                        {setHeaders.map((h) => <option key={h} value={h}>{h}</option>)}
+                        {setHeaders.map((h) => <option key={h.name} value={h.name}>{h.name}</option>)}
                       </select>
                       <select
                         value={lk.schema_field}
@@ -211,7 +222,7 @@ function DataMapRuleEdit() {
                         disabled={schemaFields.length === 0}
                       >
                         <option value="">Field…</option>
-                        {schemaFields.map((f) => <option key={f} value={f}>{f}</option>)}
+                        {schemaFields.map((f) => <option key={f.name} value={f.name}>{f.name}</option>)}
                       </select>
                       <select
                         value={lk.match_type}
@@ -287,7 +298,7 @@ function DataMapRuleEdit() {
                         disabled={schemaFields.length === 0}
                       >
                         <option value="">Field…</option>
-                        {schemaFields.map((f) => <option key={f} value={f}>{f}</option>)}
+                        {schemaFields.map((f) => <option key={f.name} value={f.name}>{f.name}</option>)}
                       </select>
                       <select
                         value={tg.data_map_set_id}
@@ -304,7 +315,7 @@ function DataMapRuleEdit() {
                         disabled={tgSetHeaders.length === 0}
                       >
                         <option value="">Column…</option>
-                        {tgSetHeaders.map((h) => <option key={h} value={h}>{h}</option>)}
+                        {tgSetHeaders.map((h) => <option key={h.name} value={h.name}>{h.name}</option>)}
                       </select>
                       <select
                         value={tg.mode}
@@ -344,37 +355,37 @@ function DataMapRuleEdit() {
                             </button>
                           ))}
                         </div>
-                        {/* Schema field chips */}
-                        {schemaFields.length > 0 && (
+                        {/* Schema field chips — number only in calculation mode */}
+                        {schemaFields.filter((f) => f.data_type === 'number').length > 0 && (
                           <div className="flex flex-wrap gap-1 items-start">
                             <span className="text-xs text-gray-400 dark:text-gray-500 w-16 shrink-0 pt-0.5">Schema</span>
                             <div className="flex flex-wrap gap-1">
-                              {schemaFields.map((f) => (
+                              {schemaFields.filter((f) => f.data_type === 'number').map((f) => (
                                 <button
-                                  key={f}
+                                  key={f.name}
                                   type="button"
-                                  onClick={() => appendToExpression(i, f)}
+                                  onClick={() => appendToExpression(i, f.name)}
                                   className="px-2 py-0.5 text-xs bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 rounded hover:bg-indigo-200 dark:hover:bg-indigo-900/70 transition-colors"
                                 >
-                                  {f}
+                                  {f.name}
                                 </button>
                               ))}
                             </div>
                           </div>
                         )}
-                        {/* Set column chips */}
-                        {tgSetHeaders.length > 0 && (
+                        {/* Set column chips — number only in calculation mode */}
+                        {tgSetHeaders.filter((h) => h.data_type === 'number').length > 0 && (
                           <div className="flex flex-wrap gap-1 items-start">
                             <span className="text-xs text-gray-400 dark:text-gray-500 w-16 shrink-0 pt-0.5">Set cols</span>
                             <div className="flex flex-wrap gap-1">
-                              {tgSetHeaders.map((h) => (
+                              {tgSetHeaders.filter((h) => h.data_type === 'number').map((h) => (
                                 <button
-                                  key={h}
+                                  key={h.name}
                                   type="button"
-                                  onClick={() => appendToExpression(i, h)}
+                                  onClick={() => appendToExpression(i, h.name)}
                                   className="px-2 py-0.5 text-xs bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 rounded hover:bg-amber-200 dark:hover:bg-amber-900/70 transition-colors"
                                 >
-                                  {h}
+                                  {h.name}
                                 </button>
                               ))}
                             </div>

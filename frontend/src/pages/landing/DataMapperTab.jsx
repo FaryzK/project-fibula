@@ -66,7 +66,9 @@ function DataMapperTab() {
                   <div>
                     <p className="text-sm font-medium text-gray-900 dark:text-white">{s.name}</p>
                     <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
-                      {Array.isArray(s.headers) ? s.headers.join(', ') : ''}
+                      {Array.isArray(s.headers)
+                        ? s.headers.map((h) => (typeof h === 'object' ? h.name : h)).join(', ')
+                        : ''}
                     </p>
                   </div>
                   <span className="text-xs text-gray-400 dark:text-gray-500">Edit →</span>
