@@ -444,3 +444,88 @@ describe('runSingleComparison — table level', () => {
     expect(passed).toBe(true);
   });
 });
+
+// ── withRuleLock tests ──────────────────────────────────────────────────
+const { withRuleLock, _ruleChains } = require('../../src/services/reconciliation.service');
+
+describe('withRuleLock — per-rule async mutex', () => {
+  afterEach(() => {
+    _ruleChains.clear();
+  });
+
+  it('serialises two tasks for the same ruleId', async () => {
+    const order = [];
+    let resolveFirst;
+    const firstGate = new Promise((r) => { resolveFirst = r; });
+
+    const p1 = withRuleLock('rule-1', async () => {
+      order.push('A-start');
+      await firstGate;
+      order.push('A-end');
+      return 'A';
+    });
+
+    // Give p1 a microtick to register and begin executing
+    await Promise.resolve();
+
+    const p2 = withRuleLock('rule-1', async () => {
+      order.push('B-start');
+      order.push('B-end');
+      return 'B';
+    });
+
+    // Release the first task
+    resolveFirst();
+
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1).toBe('A');
+    expect(r2).toBe('B');
+    // B must not start until A finishes
+    expect(order).toEqual(['A-start', 'A-end', 'B-start', 'B-end']);
+  });
+
+  it('allows different ruleIds to run concurrently', async () => {
+    const order = [];
+    let resolveFirst;
+    const firstGate = new Promise((r) => { resolveFirst = r; });
+
+    const p1 = withRuleLock('rule-1', async () => {
+      order.push('A-start');
+      await firstGate;
+      order.push('A-end');
+    });
+
+    await Promise.resolve();
+
+    const p2 = withRuleLock('rule-2', async () => {
+      order.push('B-start');
+      order.push('B-end');
+    });
+
+    // B should have already started because it's a different rule
+    await p2;
+    expect(order).toContain('B-start');
+    expect(order).toContain('B-end');
+    // A is still waiting
+    expect(order).not.toContain('A-end');
+
+    resolveFirst();
+    await p1;
+    expect(order).toEqual(['A-start', 'B-start', 'B-end', 'A-end']);
+  });
+
+  it('releases the lock even when the function throws', async () => {
+    await expect(
+      withRuleLock('rule-1', async () => { throw new Error('boom'); })
+    ).rejects.toThrow('boom');
+
+    // A subsequent call should still succeed (lock was released)
+    const result = await withRuleLock('rule-1', async () => 'ok');
+    expect(result).toBe('ok');
+  });
+
+  it('cleans up the chain map after all callers finish', async () => {
+    await withRuleLock('rule-1', async () => 'done');
+    expect(_ruleChains.has('rule-1')).toBe(false);
+  });
+});

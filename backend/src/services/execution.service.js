@@ -347,6 +347,9 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
           const otherPort = typeof item === 'object' ? item.outputPort : null;
           const otherExec = await documentExecutionModel.findById(otherId);
           if (otherExec && otherExec.status === 'held') {
+            // Transition to 'processing' immediately so a parallel path releasing
+            // the same doc sees status !== 'held' and skips the duplicate enqueue.
+            await documentExecutionModel.updateStatus(otherExec.id, { status: 'processing', currentNodeId: nodeId });
             const otherMeta = parseMeta(otherExec.metadata);
             const otherEdges = (graph[nodeId] || []).filter((e) => e.sourcePort === otherPort);
             const otherReconLog = await documentExecutionModel.findLog(otherId, nodeId);
@@ -500,18 +503,17 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
         currentNodeId: null,
       });
 
-      // Run fanout siblings sequentially — if sub-documents converge at a reconciliation node
-      // downstream, parallel execution would cause a TOCTOU race: the "trigger" sub-doc checks
-      // siblings' held status before they've written it. Sequential guarantees each sub-doc
-      // is fully held before the next one runs.
-      for (const { childExec, nextNodes } of fanoutRuns) {
-        try {
-          await runDocument(childExec, nodes, edges, graph, workflowRunId, pendingExecQueue, nextNodes);
-        } catch (err) {
-          console.error(`runDocument failed for fanout exec ${childExec?.id}:`, err);
-          await documentExecutionModel.updateStatus(childExec.id, { status: 'failed', currentNodeId: null }).catch(() => {});
-        }
-      }
+      // Run fanout siblings in parallel — the reconciliation service uses a per-rule
+      // async mutex to serialise document processing within each rule, so concurrent
+      // arrivals at a recon node are safe.
+      await Promise.all(
+        fanoutRuns.map(({ childExec, nextNodes }) =>
+          runDocument(childExec, nodes, edges, graph, workflowRunId, pendingExecQueue, nextNodes).catch((err) => {
+            console.error(`runDocument failed for fanout exec ${childExec?.id}:`, err);
+            return documentExecutionModel.updateStatus(childExec.id, { status: 'failed', currentNodeId: null }).catch(() => {});
+          })
+        )
+      );
 
       return;
     }
@@ -617,6 +619,9 @@ async function runDocument(docExecution, nodes, edges, graph, workflowRunId, pen
         const otherPort = typeof item === 'object' ? item.outputPort : outputPort;
         const otherExec = await documentExecutionModel.findById(otherId);
         if (otherExec && otherExec.status === 'held') {
+          // Transition to 'processing' immediately so a parallel path releasing
+          // the same doc sees status !== 'held' and skips the duplicate enqueue.
+          await documentExecutionModel.updateStatus(otherExec.id, { status: 'processing', currentNodeId: nodeId });
           const otherMeta = parseMeta(otherExec.metadata);
 
           // Update this doc's recon log from 'held' → correct status with the output port.
@@ -672,10 +677,9 @@ async function runWorkflow(workflowRunId) {
 
   const graph = buildGraph(edges);
 
-  // Run initial trigger-path docs in parallel — looks good on demo and is safe in production
-  // (each doc is its own workflow run). The theoretical TOCTOU at a reconciliation node exists
-  // if two trigger paths converge there in the same manual run, but that is rare in practice.
-  // Fanout siblings are sequential (see runDocument) to handle the split-then-reconcile case.
+  // Run initial trigger-path docs in parallel. The reconciliation service uses a
+  // per-rule async mutex to serialise document processing within each rule, so
+  // concurrent arrivals at a recon node are safe.
   const pendingExecQueue = [];
   await Promise.all(
     initialExecs.map((e) =>
@@ -686,8 +690,8 @@ async function runWorkflow(workflowRunId) {
     )
   );
 
-  // Drain any docs released by reconciliation during the parallel phase (sequential is fine
-  // here — they've already passed through the recon node and won't interact with each other).
+  // Drain docs released by reconciliation. Sequential for simplicity — these docs
+  // have already passed through the recon node and won't interact with each other.
   while (pendingExecQueue.length > 0) {
     const { docExecution, startQueue } = pendingExecQueue.shift();
     try {

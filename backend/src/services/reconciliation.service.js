@@ -3,6 +3,27 @@ const documentExecutionModel = require('../models/documentExecution.model');
 const extractorModel = require('../models/extractor.model');
 const vm = require('vm');
 
+// ── Per-rule async mutex ──────────────────────────────────────────────
+// Serialises processDocument per rule so two docs arriving concurrently
+// for the same rule cannot miss each other during matching-set creation / backfill.
+// Uses a promise-chain pattern: each caller appends itself to the chain for its
+// rule ID and awaits the previous caller before proceeding.
+const _ruleChains = new Map();
+
+async function withRuleLock(ruleId, fn) {
+  const prev = _ruleChains.get(ruleId) || Promise.resolve();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  _ruleChains.set(ruleId, gate);
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (_ruleChains.get(ruleId) === gate) _ruleChains.delete(ruleId);
+  }
+}
+
 /**
  * Simple string similarity for fuzzy matching (Levenshtein-based).
  */
@@ -510,86 +531,102 @@ async function processDocument({ docExecutionId, metadata, workflowId, nodeId, u
   const setDocExecIds = [];
 
   for (const ruleStub of ruleStubs) {
-    const rule = await reconciliationModel.findById(ruleStub.id);
-    if (!rule) continue;
+    // Per-rule mutex: only one document at a time can process matching-set
+    // creation / backfill for a given rule, preventing TOCTOU races where two
+    // concurrent docs miss each other.
+    await withRuleLock(ruleStub.id, async () => {
+      const rule = await reconciliationModel.findById(ruleStub.id);
+      if (!rule) return;
 
-    const isAnchor = extractorId === rule.anchor_extractor_id;
-    const isTarget = rule.target_extractors.some((t) => t.extractor_id === extractorId);
+      const isAnchor = extractorId === rule.anchor_extractor_id;
+      const isTarget = rule.target_extractors.some((t) => t.extractor_id === extractorId);
 
-    // Build extractor lookup (id → real name) for comparison formula context
-    const allExtractorIds = [rule.anchor_extractor_id, ...rule.target_extractors.map((t) => t.extractor_id)];
-    const allExtractors = await Promise.all(
-      allExtractorIds.map(async (eid) => {
-        const ex = await extractorModel.findById(eid);
-        return { id: eid, name: ex?.name || eid };
-      })
-    );
+      // Build extractor lookup (id → real name) for comparison formula context
+      const allExtractorIds = [rule.anchor_extractor_id, ...rule.target_extractors.map((t) => t.extractor_id)];
+      const allExtractors = await Promise.all(
+        allExtractorIds.map(async (eid) => {
+          const ex = await extractorModel.findById(eid);
+          return { id: eid, name: ex?.name || eid };
+        })
+      );
 
-    for (const variation of rule.variations) {
-      if (isAnchor) {
-        // Create a matching set for this anchor × variation if one doesn't already exist
-        const existingSets = await reconciliationModel.findMatchingSetsByAnchor(docExecutionId);
-        const existingForVariation = existingSets.find((s) => s.variation_id === variation.id);
-        let setId = existingForVariation?.id;
-        if (!setId) {
-          const newSet = await reconciliationModel.createMatchingSet({
-            ruleId: rule.id,
-            variationId: variation.id,
-            anchorDocExecId: docExecutionId,
-          });
-          setId = newSet.id;
-          await reconciliationModel.addDocToSet({
-            matchingSetId: setId,
-            documentExecutionId: docExecutionId,
-            extractorId,
-          });
-          // Retroactively pull in held docs of missing types
-          await backfillHeldDocsToSet(setId, rule, variation, userId);
-        }
+      for (const variation of rule.variations) {
+        if (isAnchor) {
+          // Create a matching set for this anchor × variation if one doesn't already exist
+          const existingSets = await reconciliationModel.findMatchingSetsByAnchor(docExecutionId);
+          const existingForVariation = existingSets.find((s) => s.variation_id === variation.id);
+          let setId = existingForVariation?.id;
+          if (!setId) {
+            const newSet = await reconciliationModel.createMatchingSet({
+              ruleId: rule.id,
+              variationId: variation.id,
+              anchorDocExecId: docExecutionId,
+            });
+            setId = newSet.id;
+            await reconciliationModel.addDocToSet({
+              matchingSetId: setId,
+              documentExecutionId: docExecutionId,
+              extractorId,
+            });
+            // Retroactively pull in held docs of missing types
+            await backfillHeldDocsToSet(setId, rule, variation, userId);
+          }
 
-        const { fullyReconciled } = await finaliseSet(setId, rule, variation, allExtractors);
-        // Only the anchor doc itself is released — target docs are handled by their own anchor rules
-        if (fullyReconciled && rule.auto_send_out) {
-          const anchorHeld = await reconciliationModel.findHeldDocByDocExecId(docExecutionId);
-          if (anchorHeld) await reconciliationModel.updateHeldDocStatus(anchorHeld.id, 'reconciled');
-          shouldContinue = true;
-        }
-      }
-
-      if (isTarget) {
-        // Find pending sets in this variation where this doc belongs
-        const pendingSets = await reconciliationModel.findPendingMatchingSetsByVariation(variation.id);
-        for (const set of pendingSets) {
-          const matches = docBelongsToSet(
-            extractorId,
-            metadata.header || metadata,
-            set.setDocs,
-            variation.doc_matching_links
-          );
-          if (!matches) continue;
-
-          await reconciliationModel.addDocToSet({
-            matchingSetId: set.id,
-            documentExecutionId: docExecutionId,
-            extractorId,
-          });
-
-          // Retroactively pull in held docs of still-missing types
-          await backfillHeldDocsToSet(set.id, rule, variation, userId);
-
-          // Run comparisons and update matching set status.
-          // If auto_send_out, release only the anchor doc — target docs are handled by their own rules.
-          const { fullyReconciled, setDocs: finalDocs } = await finaliseSet(set.id, rule, variation, allExtractors);
+          const { fullyReconciled } = await finaliseSet(setId, rule, variation, allExtractors);
+          // Only the anchor doc itself is released — target docs are handled by their own anchor rules
           if (fullyReconciled && rule.auto_send_out) {
-            const anchorDoc = finalDocs.find((d) => d.extractor_id === rule.anchor_extractor_id);
-            if (anchorDoc && anchorDoc.document_execution_id !== docExecutionId) {
-              const hd = await reconciliationModel.findHeldDocByDocExecId(anchorDoc.document_execution_id);
-              if (hd) await reconciliationModel.updateHeldDocStatus(hd.id, 'reconciled');
-              setDocExecIds.push({ docExecutionId: anchorDoc.document_execution_id, outputPort: hd?.slot_id || slotId });
+            const anchorHeld = await reconciliationModel.findHeldDocByDocExecId(docExecutionId);
+            if (anchorHeld) await reconciliationModel.updateHeldDocStatus(anchorHeld.id, 'reconciled');
+            shouldContinue = true;
+          }
+        }
+
+        if (isTarget) {
+          // Find pending sets in this variation where this doc belongs
+          const pendingSets = await reconciliationModel.findPendingMatchingSetsByVariation(variation.id);
+          for (const set of pendingSets) {
+            const matches = docBelongsToSet(
+              extractorId,
+              metadata.header || metadata,
+              set.setDocs,
+              variation.doc_matching_links
+            );
+            if (!matches) continue;
+
+            await reconciliationModel.addDocToSet({
+              matchingSetId: set.id,
+              documentExecutionId: docExecutionId,
+              extractorId,
+            });
+
+            // Retroactively pull in held docs of still-missing types
+            await backfillHeldDocsToSet(set.id, rule, variation, userId);
+
+            // Run comparisons and update matching set status.
+            // If auto_send_out, release only the anchor doc — target docs are handled by their own rules.
+            const { fullyReconciled, setDocs: finalDocs } = await finaliseSet(set.id, rule, variation, allExtractors);
+            if (fullyReconciled && rule.auto_send_out) {
+              const anchorDoc = finalDocs.find((d) => d.extractor_id === rule.anchor_extractor_id);
+              if (anchorDoc && anchorDoc.document_execution_id !== docExecutionId) {
+                const hd = await reconciliationModel.findHeldDocByDocExecId(anchorDoc.document_execution_id);
+                if (hd) await reconciliationModel.updateHeldDocStatus(hd.id, 'reconciled');
+                setDocExecIds.push({ docExecutionId: anchorDoc.document_execution_id, outputPort: hd?.slot_id || slotId });
+              }
             }
           }
         }
       }
+    });
+  }
+
+  // Deduplicate setDocExecIds by docExecutionId — the same anchor can appear
+  // from multiple rules/variations that all became fully reconciled.
+  const uniqueReleases = [];
+  const seenExecIds = new Set();
+  for (const item of setDocExecIds) {
+    if (!seenExecIds.has(item.docExecutionId)) {
+      seenExecIds.add(item.docExecutionId);
+      uniqueReleases.push(item);
     }
   }
 
@@ -598,12 +635,12 @@ async function processDocument({ docExecutionId, metadata, workflowId, nodeId, u
       type: 'continue',
       outputMetadata: { ...metadata, _reconciled: true },
       outputPort: slotId,
-      setDocExecIds,
+      setDocExecIds: uniqueReleases,
     };
   }
 
   // Arriving doc stays held, but some already-held anchor docs may now be releasable.
-  return { type: 'hold', setDocExecIds };
+  return { type: 'hold', setDocExecIds: uniqueReleases };
 }
 
-module.exports = { processDocument, runAndRecordComparisons, runSingleComparison };
+module.exports = { processDocument, runAndRecordComparisons, runSingleComparison, withRuleLock, _ruleChains };
